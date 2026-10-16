@@ -574,7 +574,7 @@ class FreeWindowManager(
      * Called when the user taps inside (focusable=true) or outside (false).
      */
     override fun setWindowFocusable(windowId: Int, focusable: Boolean) {
-        val record = records[windowId] ?: return
+        val record = find(windowId) ?: return
         val view = record.view ?: return
         val params = view.layoutParams as? WindowManager.LayoutParams ?: return
         val currentlyFocusable = (params.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE) == 0
