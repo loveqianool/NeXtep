@@ -1,9 +1,9 @@
 id=nextep
-name=NeXtep
-version=0.3.0
-versionCode=3
+name=NeXtep自由窗口
+version=1.2.2
+versionCode=10
 author=loveqianool
-description=ColorOS 16 native side workspace foundation
+description=悬浮球 + 自由窗口 + 单窗口静音 LSPosed module
 minApiVersion=101
 targetApiVersion=102
 staticScope=false
