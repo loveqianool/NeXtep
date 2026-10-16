@@ -25,8 +25,8 @@ import kotlin.math.hypot
  * Own position/size come from [setWindowRect] (tracked for drag bookkeeping;
  * the actual window geometry is owned by the manager via WindowManager
  * params). Rendering surface is [textureView]; the manager wires
- * [onSurfaceReady] to attach a VirtualDisplay. The [SurfaceTexture] is
- * preserved across remove/add (z-order changes) so the display survives.
+ * [onSurfaceReady] to attach a VirtualDisplay. On window re-add (z-order)
+ * the surface is recreated and the manager rebuilds the display.
  */
 class FreeWindowView(
     context: Context,
@@ -65,8 +65,6 @@ class FreeWindowView(
     private var resizeStartRawY = 0f
     private var resizeStartRect: Rect? = null
 
-    private var savedSurfaceTexture: SurfaceTexture? = null
-
     private val surfaceListener = object : TextureView.SurfaceTextureListener {
         override fun onSurfaceTextureAvailable(surface: SurfaceTexture, width: Int, height: Int) {
             onSurfaceReady?.invoke(Surface(surface))
@@ -74,13 +72,10 @@ class FreeWindowView(
 
         override fun onSurfaceTextureSizeChanged(surface: SurfaceTexture, width: Int, height: Int) = Unit
 
-        override fun onSurfaceTextureDestroyed(surface: SurfaceTexture): Boolean {
-            // Keep the SurfaceTexture alive across remove/add (z-order changes):
-            // the VirtualDisplay keeps rendering into it, and we hand it back
-            // to the TextureView in onAttachedToWindow.
-            savedSurfaceTexture = surface
-            return true
-        }
+        // Let the framework release the SurfaceTexture on detach. When the
+        // window is re-added (z-order change), a fresh SurfaceTexture is
+        // created and the manager rebuilds the VirtualDisplay on it.
+        override fun onSurfaceTextureDestroyed(surface: SurfaceTexture): Boolean = false
 
         override fun onSurfaceTextureUpdated(surface: SurfaceTexture) = Unit
     }
@@ -243,25 +238,6 @@ class FreeWindowView(
     override fun onDetachedFromWindow() {
         removeCallbacks(carryRunnable)
         super.onDetachedFromWindow()
-    }
-
-    override fun onAttachedToWindow() {
-        super.onAttachedToWindow()
-        // Re-hand the kept SurfaceTexture to the TextureView after a
-        // remove/add (z-order change). The VirtualDisplay never stopped
-        // rendering into it.
-        savedSurfaceTexture?.let { textureView.setSurfaceTexture(it) }
-    }
-
-    /** Explicitly stash the live SurfaceTexture before a removeView. */
-    fun preserveSurfaceTexture() {
-        textureView.surfaceTexture?.let { savedSurfaceTexture = it }
-    }
-
-    /** Drop the kept SurfaceTexture for good (window closed). */
-    fun releaseSurfaceTexture() {
-        runCatching { savedSurfaceTexture?.release() }
-        savedSurfaceTexture = null
     }
 
     fun setAppInfo(icon: Drawable?, title: String) {

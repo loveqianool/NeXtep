@@ -32,8 +32,9 @@ import kotlin.math.min
  * window's TextureView.
  *
  * Z-order follows add sequence; [bringToFront] re-adds a window to raise it.
- * The view preserves its SurfaceTexture across the remove/add so the
- * VirtualDisplay survives the reorder.
+ * The TextureView surface is recreated on re-add, so the VirtualDisplay is
+ * rebuilt on the new surface and the task is moved over via
+ * ActivityTaskManagerCompat.moveTaskToDisplay (state is preserved).
  *
  * The floating ball and app-list panel are owned by FreeWindowSystemUiHook;
  * [restackOverlay] is called after z-order changes so the hook can keep
@@ -136,7 +137,13 @@ class FreeWindowManager(
     }
 
     private fun onViewSurfaceReady(record: Record, surface: Surface) {
-        if (record.virtualDisplay != null) return
+        if (record.virtualDisplay != null) {
+            // The TextureView surface was recreated (window re-added for
+            // z-order). Rebuild the display on the new surface and move the
+            // task over; the app keeps its state.
+            rebuildDisplay(record, surface)
+            return
+        }
         val rect = record.state.rect
         val geometry = SlotGeometry(
             rect.width().coerceAtLeast(1),
@@ -155,6 +162,50 @@ class FreeWindowManager(
         // Fresh display (initial launch, or relaunch after the parked task died):
         // the task always starts here, never migrated between displays.
         startActivityOnDisplay(record, displayId)
+        notifyChanged()
+    }
+
+    /**
+     * The window was re-added (z-order change) and the TextureView handed us a
+     * fresh surface. Build a new VirtualDisplay on it, move the live task
+     * over, then release the old display. The app keeps its state; it only
+     * sees a display change. Falls back to relaunch if the move fails.
+     */
+    private fun rebuildDisplay(record: Record, surface: Surface) {
+        val taskId = record.state.taskId
+        val rect = record.state.rect
+        val geometry = SlotGeometry(
+            rect.width().coerceAtLeast(1),
+            rect.height().coerceAtLeast(1),
+            densityDpi,
+        )
+        val display = VirtualDisplayFactory(appContext)
+            .create(record.state.windowId, geometry, surface)
+            .getOrElse { error ->
+                NeXtepLog.error("freewindow", "Display rebuild failed window=${record.state.windowId}", error)
+                return
+            }
+        val newDisplayId = display.display.displayId
+        if (taskId >= 0) {
+            val moved = ActivityTaskManagerCompat.moveTaskToDisplay(taskId, newDisplayId).isSuccess
+            if (!moved) {
+                NeXtepLog.warn("freewindow", "moveTaskToDisplay failed task=$taskId; relaunching")
+                ActivityTaskManagerCompat.removeTask(taskId)
+                    .onFailure { error -> NeXtepLog.warn("freewindow", "removeTask failed task=$taskId", error) }
+                record.state = record.state.copy(taskId = -1)
+            }
+        }
+        runCatching { record.virtualDisplay?.release() }
+        record.virtualDisplay = display
+        record.state = record.state.copy(displayId = newDisplayId)
+        if (record.state.taskId < 0) {
+            // No live task (launch in flight, or move failed); start fresh.
+            startActivityOnDisplay(record, newDisplayId)
+        }
+        NeXtepLog.info(
+            "freewindow",
+            "Rebuilt display window=${record.state.windowId} display=$newDisplayId task=$taskId",
+        )
         notifyChanged()
     }
 
@@ -215,7 +266,6 @@ class FreeWindowManager(
         record.virtualDisplay = null
         record.view?.let { view ->
             runCatching { windowManager.removeViewImmediate(view) }
-            view.releaseSurfaceTexture()
         }
         record.view = null
         record.params = null
@@ -255,7 +305,6 @@ class FreeWindowManager(
         val record = find(windowId) ?: return
         if (record.state.mode != FreeWindowMode.PARKED) return
         // If the system killed the task while parked, relaunch it on unpark.
-        // The view stayed attached, so its SurfaceTexture is still live.
         if (record.state.taskId >= 0 && taskRepository.findTask(record.state.taskId) == null) {
             NeXtepLog.info("freewindow", "Parked task died; relaunching window=$windowId")
             runCatching { record.virtualDisplay?.release() }
@@ -263,8 +312,10 @@ class FreeWindowManager(
             record.state = record.state.copy(taskId = -1, displayId = -1, mode = FreeWindowMode.WINDOWED)
             val view = record.view ?: return
             view.visibility = View.VISIBLE
+            // Re-add raises z-order; the fresh surface callback will fire
+            // onSurfaceTextureAvailable -> onViewSurfaceReady -> relaunch,
+            // since virtualDisplay is now null.
             bringToFront(windowId)
-            view.currentSurface()?.let { surface -> onViewSurfaceReady(record, surface) }
             notifyChanged()
             return
         }
@@ -311,9 +362,8 @@ class FreeWindowManager(
         val params = record.params ?: return
         records.remove(record)
         records += record
-        // Re-add the window to raise its z-order. The view preserves its
-        // SurfaceTexture across the remove/add so the VirtualDisplay survives.
-        view.preserveSurfaceTexture()
+        // Re-add the window to raise its z-order. The TextureView surface is
+        // recreated on re-add; onViewSurfaceReady rebuilds the display then.
         runCatching {
             windowManager.removeViewImmediate(view)
             windowManager.addView(view, params)
