@@ -52,9 +52,9 @@ class DisplayEngine(private val context: Context) {
 
     private fun resolveFlags(): Int {
         var flags = DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY or
-            DisplayManager.VIRTUAL_DISPLAY_FLAG_PRESENTATION or
-            DisplayManager.VIRTUAL_DISPLAY_FLAG_TRUSTED
-        // Optional on some versions; read via reflection.
+            DisplayManager.VIRTUAL_DISPLAY_FLAG_PRESENTATION
+        // TRUSTED, OWN_FOCUS etc. may be hidden; read via reflection.
+        flags = flags or readFlag("VIRTUAL_DISPLAY_FLAG_TRUSTED")
         flags = flags or readFlag("VIRTUAL_DISPLAY_FLAG_OWN_FOCUS")
         flags = flags or readFlag("VIRTUAL_DISPLAY_FLAG_OWN_DISPLAY_GROUP")
         return flags

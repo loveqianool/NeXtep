@@ -44,13 +44,23 @@ object TouchForwarder {
         }
     }
 
+    private val getInstanceMethod: java.lang.reflect.Method? by lazy {
+        try {
+            InputManager::class.java.getMethod("getInstance").apply { isAccessible = true }
+        } catch (e: Throwable) {
+            Log.i(TAG, "getInstance lookup failed: ${e.message}")
+            null
+        }
+    }
+
     /**
      * Stamps [displayId] on [event] and injects it asynchronously into the
      * input system. Returns true if the event was accepted.
      */
     fun forward(event: MotionEvent, displayId: Int): Boolean {
+        val getInstance = getInstanceMethod ?: return false
         val inputManager = try {
-            InputManager.getInstance()
+            getInstance.invoke(null)
         } catch (e: Throwable) {
             Log.i(TAG, "InputManager.getInstance failed: ${e.message}")
             return false
@@ -66,16 +76,9 @@ object TouchForwarder {
     }
 
     /**
-     * Routes the event at the target display. InputEvent.setDisplayId is a
-     * public API since 34; the reflection path is kept for older platforms.
+     * Routes the event at the target display via reflection.
      */
     private fun stampDisplayId(event: MotionEvent, displayId: Int): Boolean {
-        try {
-            event.setDisplayId(displayId)
-            return true
-        } catch (e: Throwable) {
-            Log.i(TAG, "direct setDisplayId failed, trying reflection: ${e.message}")
-        }
         return try {
             val method = setDisplayIdMethod ?: return false
             method.invoke(event, displayId)
