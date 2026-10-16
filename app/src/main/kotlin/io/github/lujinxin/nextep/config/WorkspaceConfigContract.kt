@@ -101,7 +101,7 @@ object WorkspaceConfigClient {
         }
         val direct = runCatching {
             context.contentResolver.call(
-                android.net.Uri.parse("content://io.github.lujinxin.nextep.workspace.config"),
+                android.net.Uri.parse("content://io.github.loveqianool.nextep.workspace.config"),
                 "query", null, null,
             )
         }.getOrNull()

@@ -10,10 +10,10 @@
     </queries>
 
     <permission
-        android:name="io.github.lujinxin.nextep.permission.CONTROL_WORKSPACE"
+        android:name="io.github.loveqianool.nextep.permission.CONTROL_WORKSPACE"
         android:protectionLevel="signature" />
 
-    <uses-permission android:name="io.github.lujinxin.nextep.permission.CONTROL_WORKSPACE" />
+    <uses-permission android:name="io.github.loveqianool.nextep.permission.CONTROL_WORKSPACE" />
     <uses-permission android:name="android.permission.REORDER_TASKS" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission
@@ -71,7 +71,7 @@
 
         <provider
             android:name=".config.WorkspaceConfigProvider"
-            android:authorities="io.github.lujinxin.nextep.workspace.config"
+            android:authorities="io.github.loveqianool.nextep.workspace.config"
             android:exported="true"
             android:permission="android.permission.STATUS_BAR_SERVICE" />
     </application>
