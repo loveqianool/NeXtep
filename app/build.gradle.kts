@@ -2,6 +2,8 @@ plugins {
     alias(libs.plugins.android.application)
 }
 
+import java.util.Base64
+
 // Persistent debug keystore: CI runners are ephemeral, so without this every
 // build gets a fresh random debug key and Android refuses to update-install
 // over the previous build (signature mismatch -> must uninstall first).
@@ -10,7 +12,7 @@ plugins {
 val debugKeystoreFile = file("debug.keystore")
 if (!debugKeystoreFile.exists()) {
     debugKeystoreFile.writeBytes(
-        java.util.Base64.getDecoder().decode(file("debug.keystore.b64").readText().trim()),
+        Base64.getDecoder().decode(file("debug.keystore.b64").readText().trim()),
     )
 }
 
