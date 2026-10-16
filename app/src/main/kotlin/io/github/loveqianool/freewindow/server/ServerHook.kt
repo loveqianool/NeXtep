@@ -56,7 +56,7 @@ object ServerHook {
             app.registerReceiver(
                 receiver,
                 android.content.IntentFilter(WindowMute.ACTION_MUTE),
-                android.content.Context.RECEIVER_NOT_EXPORTED,
+                android.content.Context.RECEIVER_EXPORTED,
             )
             FwLog.i("mute receiver registered")
         } catch (e: Throwable) {
