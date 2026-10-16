@@ -213,8 +213,13 @@ object WindowManager : WindowHost {
         params.height = rect.height()
         params.x = rect.left
         params.y = rect.top
-        wm?.updateViewLayout(rec.view, params)
-        Log.i(TAG, "onResizeCommit: updateViewLayout called")
+        val wmRef = wm
+        if (wmRef == null) {
+            Log.i(TAG, "onResizeCommit: wm is NULL!")
+        } else {
+            wmRef.updateViewLayout(rec.view, params)
+            Log.i(TAG, "onResizeCommit: updateViewLayout called")
+        }
         pendingResize[id] = true
     }
 
