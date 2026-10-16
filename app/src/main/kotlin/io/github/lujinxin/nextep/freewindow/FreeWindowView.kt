@@ -205,6 +205,15 @@ class FreeWindowView(
     }
 
     init {
+        // ACTION_OUTSIDE (via FLAG_WATCH_OUTSIDE_TOUCH): user tapped outside
+        // the window — drop focusability so underlying apps work normally.
+        setOnTouchListener { _, event ->
+            if (event.actionMasked == MotionEvent.ACTION_OUTSIDE) {
+                host.setWindowFocusable(this@FreeWindowView.windowId, false)
+                return@setOnTouchListener true
+            }
+            false
+        }
         background = GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
             setColor(Color.TRANSPARENT)
@@ -264,6 +273,9 @@ class FreeWindowView(
             setOnTouchListener { _, event ->
                 if (event.actionMasked == MotionEvent.ACTION_DOWN) {
                     host.onWindowTap(this@FreeWindowView.windowId)
+                    // Make the window focusable so the IME can show for apps
+                    // on the VirtualDisplay. Reverted on ACTION_OUTSIDE.
+                    host.setWindowFocusable(this@FreeWindowView.windowId, true)
                 }
                 forwardToDisplay(event)
                 true

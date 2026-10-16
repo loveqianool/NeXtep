@@ -43,6 +43,7 @@ data class FreeWindowState(
  */
 interface FreeWindowViewHost {
     fun onWindowTap(windowId: Int)
+    fun setWindowFocusable(windowId: Int, focusable: Boolean)
     fun onWindowMove(windowId: Int, dx: Int, dy: Int)
     fun onWindowResizePreview(windowId: Int, rect: Rect)
     fun onWindowResizeCommit(windowId: Int, rect: Rect)

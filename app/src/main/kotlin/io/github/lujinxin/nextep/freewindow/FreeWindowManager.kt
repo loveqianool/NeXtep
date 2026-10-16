@@ -549,13 +549,18 @@ class FreeWindowManager(
             rect.width(),
             rect.height(),
             windowType,
-            // NOT_FOCUSABLE: the overlay must never steal input focus from
-            // the system underneath (otherwise the IME breaks for underlying
-            // apps). NOT_TOUCH_MODAL keeps outside touches falling through.
-            // The IME for apps inside the window is handled on the
-            // VirtualDisplay itself (no OWN_CONTENT_ONLY flag).
+            // NOT_FOCUSABLE by default: the overlay must not steal input focus
+            // from the system underneath (otherwise the IME breaks for
+            // underlying apps). NOT_TOUCH_MODAL keeps outside touches falling
+            // through. WATCH_OUTSIDE_TOUCH lets us know when the user taps
+            // outside so we can drop focus again.
+            // When the user taps inside the window, we clear NOT_FOCUSABLE
+            // (see setWindowFocusable) so the IME can show on the main display
+            // for apps running on the VirtualDisplay (OWN_CONTENT_ONLY forces
+            // the IME to main).
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
             PixelFormat.TRANSLUCENT,
         ).apply {
             gravity = Gravity.TOP or Gravity.START
@@ -563,6 +568,24 @@ class FreeWindowManager(
             y = rect.top
             title = "NeXtepFreeWindow"
         }
+
+    /**
+     * Dynamically toggles focusability of a free window.
+     * Called when the user taps inside (focusable=true) or outside (false).
+     */
+    override fun setWindowFocusable(windowId: Int, focusable: Boolean) {
+        val record = records[windowId] ?: return
+        val params = record.view.layoutParams as? WindowManager.LayoutParams ?: return
+        val currentlyFocusable = (params.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE) == 0
+        if (currentlyFocusable == focusable) return
+        params.flags = if (focusable) {
+            params.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()
+        } else {
+            params.flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+        }
+        windowManager.updateViewLayout(record.view, params)
+        NeXtepLog.info("freewindow", "Window focusable=$focusable window=$windowId")
+    }
 
     private fun defaultRect(): Rect {
         val metrics = appContext.resources.displayMetrics
