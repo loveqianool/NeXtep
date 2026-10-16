@@ -9,6 +9,13 @@ import io.github.loveqianool.freewindow.window.WindowSystemUiHook
 
 class HookEntry : XposedModule() {
     override fun onSystemServerStarting(param: SystemServerStartingParam) {
+        try {
+            val appInfo = param.javaClass.getDeclaredMethod("getApplicationInfo")
+                .apply { isAccessible = true }.invoke(param) as? android.content.pm.ApplicationInfo
+            Log.i(TAG, "system_server starting, module apk=${appInfo?.sourceDir}")
+        } catch (e: Throwable) {
+            Log.i(TAG, "system_server starting (apk path unavailable: ${e.message})")
+        }
         Log.i(TAG, "system_server starting")
         ServerHook.install(this, param.classLoader)
     }
