@@ -18,6 +18,12 @@ object ServerHook {
     fun install(module: XposedModule, classLoader: ClassLoader) {
         if (installed) return
         installed = true
+        try {
+            val codeSource = ServerHook::class.java.protectionDomain?.codeSource?.location
+            Log.i(TAG, "ServerHook loaded from: $codeSource")
+        } catch (e: Throwable) {
+            Log.i(TAG, "ServerHook codeSource unavailable: ${e.message}")
+        }
         installDisplayHook(module, classLoader)
         installMuteReceiver()
     }
