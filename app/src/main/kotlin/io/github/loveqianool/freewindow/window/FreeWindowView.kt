@@ -116,15 +116,14 @@ class FreeWindowView @JvmOverloads constructor(
                 host.onTap(windowId)
                 // Delay DOWN: updateViewLayout (focusable) is async; the app
                 // requests the IME on DOWN, which needs the window to already
-                // be focusable. 100ms is enough for WM to apply the change.
-                // Copy the event (pooled).
+                // be focusable. Copy the event (pooled).
                 if (displayId >= 0) {
                     val copy = MotionEvent.obtain(event)
                     val did = displayId
                     postDelayed({
                         TouchForwarder.forward(copy, did)
                         copy.recycle()
-                    }, 100)
+                    }, 233)
                 }
             } else {
                 if (displayId >= 0) {
