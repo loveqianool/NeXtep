@@ -575,7 +575,8 @@ class FreeWindowManager(
      */
     override fun setWindowFocusable(windowId: Int, focusable: Boolean) {
         val record = records[windowId] ?: return
-        val params = record.view.layoutParams as? WindowManager.LayoutParams ?: return
+        val view = record.view ?: return
+        val params = view.layoutParams as? WindowManager.LayoutParams ?: return
         val currentlyFocusable = (params.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE) == 0
         if (currentlyFocusable == focusable) return
         params.flags = if (focusable) {
@@ -583,7 +584,7 @@ class FreeWindowManager(
         } else {
             params.flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
         }
-        windowManager.updateViewLayout(record.view, params)
+        windowManager.updateViewLayout(view, params)
         NeXtepLog.info("freewindow", "Window focusable=$focusable window=$windowId")
     }
 
