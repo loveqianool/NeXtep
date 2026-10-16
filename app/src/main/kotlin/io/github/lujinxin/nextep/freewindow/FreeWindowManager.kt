@@ -4,8 +4,10 @@ import android.app.ActivityOptions
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.Rect
+import android.graphics.drawable.GradientDrawable
 import android.hardware.display.VirtualDisplay
 import android.os.Handler
 import android.os.Looper
@@ -258,6 +260,7 @@ class FreeWindowManager(
 
     fun closeWindow(windowId: Int) {
         val record = find(windowId) ?: return
+        hideResizePreview()
         record.state.taskId.takeIf { it >= 0 }?.let { taskId ->
             ActivityTaskManagerCompat.removeTask(taskId)
                 .onFailure { error -> NeXtepLog.warn("freewindow", "removeTask failed task=$taskId", error) }
@@ -358,6 +361,12 @@ class FreeWindowManager(
             unparkWindow(windowId)
             return
         }
+        // Already the topmost window: skip the re-add. Re-adding destroys and
+        // recreates the surface (VD rebuild + task move + visible flicker),
+        // so doing it on every tap breaks scroll/click gestures.
+        if (records.lastOrNull() === record) {
+            return
+        }
         val view = record.view ?: return
         val params = record.params ?: return
         records.remove(record)
@@ -415,11 +424,67 @@ class FreeWindowManager(
     }
 
     override fun onWindowResizeCommit(windowId: Int, rect: Rect) {
+        hideResizePreview()
         val record = find(windowId) ?: return
         if (record.state.mode == FreeWindowMode.MAXIMIZED) return
         val clamped = Rect(rect).apply { clampMinSize() }
         applyRect(record, clamped, resizeDisplay = true)
         notifyChanged()
+    }
+
+    override fun displayIdForWindow(windowId: Int): Int? {
+        val record = find(windowId) ?: return null
+        return record.state.displayId.takeIf { it >= 0 }
+    }
+
+    // ------------------------------------------------------- resize preview
+
+    private var resizePreview: View? = null
+
+    private fun dp(v: Int) = (v * density).toInt()
+
+    override fun onWindowResizePreview(windowId: Int, rect: Rect) {
+        val clamped = Rect(rect).apply { clampMinSize() }
+        val view = resizePreview ?: run {
+            val v = View(appContext).apply {
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.RECTANGLE
+                    setColor(Color.TRANSPARENT)
+                    setStroke(dp(2), Color.WHITE, dp(8).toFloat(), dp(4).toFloat())
+                }
+            }
+            resizePreview = v
+            v
+        }
+        val params = (view.layoutParams as? WindowManager.LayoutParams)
+            ?: WindowManager.LayoutParams(
+                clamped.width(),
+                clamped.height(),
+                windowType,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
+                PixelFormat.TRANSLUCENT,
+            ).apply {
+                gravity = Gravity.TOP or Gravity.START
+                title = "NeXtepResizePreview"
+            }
+        params.x = clamped.left
+        params.y = clamped.top
+        params.width = clamped.width()
+        params.height = clamped.height()
+        if (view.parent == null) {
+            runCatching { windowManager.addView(view, params) }
+        } else {
+            runCatching { windowManager.updateViewLayout(view, params) }
+        }
+    }
+
+    private fun hideResizePreview() {
+        resizePreview?.let { view ->
+            runCatching { windowManager.removeViewImmediate(view) }
+        }
+        resizePreview = null
     }
 
     override fun onWindowClose(windowId: Int) = closeWindow(windowId)

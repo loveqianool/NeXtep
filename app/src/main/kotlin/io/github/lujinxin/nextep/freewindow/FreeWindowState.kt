@@ -41,12 +41,15 @@ interface FreeWindowViewHost {
     fun onWindowTap(windowId: Int)
     fun onWindowMove(windowId: Int, dx: Int, dy: Int)
     fun onWindowCarryRelease(windowId: Int, centerX: Int, centerY: Int)
+    fun onWindowResizePreview(windowId: Int, rect: Rect)
     fun onWindowResizeCommit(windowId: Int, rect: Rect)
     fun onWindowClose(windowId: Int)
     fun onWindowPark(windowId: Int)
     fun onWindowMaximizeToggle(windowId: Int)
     fun onWindowMuteToggle(windowId: Int)
     fun onWindowSurfaceReady(windowId: Int, surface: Surface)
+    /** The VirtualDisplay id backing the window, or null if none. */
+    fun displayIdForWindow(windowId: Int): Int?
 }
 
 interface FloatingBallHost {

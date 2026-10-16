@@ -3,6 +3,8 @@ package io.github.lujinxin.nextep.freewindow
 import android.content.Context
 import android.graphics.Color
 import android.graphics.Rect
+import android.hardware.input.InputManager
+import android.view.InputEvent
 import android.view.Surface
 import android.graphics.SurfaceTexture
 import android.graphics.drawable.Drawable
@@ -138,7 +140,9 @@ class FreeWindowView(
                     (start.width() + event.rawX - resizeStartRawX).toInt().coerceAtLeast(minPx)
                 val newH =
                     (start.height() + event.rawY - resizeStartRawY).toInt().coerceAtLeast(minPx)
-                setWindowRect(Rect(start.left, start.top, start.left + newW, start.top + newH))
+                val preview = Rect(start.left, start.top, start.left + newW, start.top + newH)
+                setWindowRect(preview)
+                host.onWindowResizePreview(windowId, preview)
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 host.onWindowResizeCommit(windowId, currentRect())
@@ -179,9 +183,12 @@ class FreeWindowView(
         titleBar.apply {
             orientation = LinearLayout.HORIZONTAL
             setBackgroundColor(0xCC1F1F1F.toInt())
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
+            // Floating overlay: the TextureView fills the whole window 1:1
+            // with the VirtualDisplay, so touches map without scaling.
+            layoutParams = LayoutParams(
+                LayoutParams.MATCH_PARENT,
                 dp(44),
+                Gravity.TOP,
             )
             addView(iconView)
             addView(titleView)
@@ -194,33 +201,26 @@ class FreeWindowView(
 
         textureView.apply {
             // NB: never set a background on a TextureView — it throws
-            // UnsupportedOperationException. The black backdrop lives on the
-            // parent column instead.
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                0,
-                1f,
+            // UnsupportedOperationException. Fills the window 1:1 with the
+            // VirtualDisplay; the view itself has the black backdrop.
+            layoutParams = LayoutParams(
+                LayoutParams.MATCH_PARENT,
+                LayoutParams.MATCH_PARENT,
             )
             surfaceTextureListener = surfaceListener
             setOnTouchListener { _, event ->
                 if (event.actionMasked == MotionEvent.ACTION_DOWN) {
                     host.onWindowTap(this@FreeWindowView.windowId)
                 }
-                false
+                forwardToDisplay(event)
+                true
             }
         }
 
-        val contentColumn = LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(0xFF000000.toInt())
-            layoutParams = LayoutParams(
-                LayoutParams.MATCH_PARENT,
-                LayoutParams.MATCH_PARENT,
-            )
-            addView(titleBar)
-            addView(textureView)
-        }
-        addView(contentColumn)
+        // Black backdrop behind the (transparent-until-drawn) TextureView.
+        setBackgroundColor(0xFF000000.toInt())
+        addView(textureView)
+        addView(titleBar)
 
         val resizeHandle = View(context).apply {
             background = GradientDrawable().apply {
@@ -238,6 +238,42 @@ class FreeWindowView(
     override fun onDetachedFromWindow() {
         removeCallbacks(carryRunnable)
         super.onDetachedFromWindow()
+    }
+
+    // Cached reflection for input injection (hidden APIs).
+    private val injectMethod by lazy {
+        runCatching {
+            InputManager::class.java.getMethod(
+                "injectInputEvent", InputEvent::class.java, Int::class.javaPrimitiveType,
+            )
+        }.getOrNull()
+    }
+    private val setDisplayIdMethod by lazy {
+        runCatching {
+            InputEvent::class.java.getMethod("setDisplayId", Int::class.javaPrimitiveType)
+        }.getOrNull()
+    }
+
+    /**
+     * Forward a touch on the TextureView into the VirtualDisplay. The view
+     * fills the window 1:1 with the display, so coordinates map directly;
+     * only the displayId needs overriding.
+     */
+    private fun forwardToDisplay(event: MotionEvent) {
+        val displayId = host.displayIdForWindow(windowId) ?: return
+        if (displayId < 0) return
+        val inject = injectMethod ?: return
+        val setDisplayId = setDisplayIdMethod ?: return
+        val inputManager = context.getSystemService(InputManager::class.java) ?: return
+        val ev = MotionEvent.obtain(event)
+        try {
+            setDisplayId.invoke(ev, displayId)
+            inject.invoke(inputManager, ev, 0 /* INJECT_INPUT_EVENT_MODE_ASYNC */)
+        } catch (e: Exception) {
+            // Injection failures are non-fatal; the window still works.
+        } finally {
+            ev.recycle()
+        }
     }
 
     fun setAppInfo(icon: Drawable?, title: String) {
