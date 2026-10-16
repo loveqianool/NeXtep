@@ -29,28 +29,37 @@ object WindowMute {
         }
     }
 
-    fun setMuted(context: Context, packageName: String, uid: Int, muted: Boolean) {
-        runCatching {
+    /** Cached AppOps proxy + setMode; reflection is expensive per toggle. */
+    private val appOpsSetMode: Pair<Any, java.lang.reflect.Method>? by lazy {
+        try {
             val serviceManager = Class.forName("android.os.ServiceManager")
             val binder = serviceManager
                 .getMethod("getService", String::class.java)
                 .invoke(null, Context.APP_OPS_SERVICE) as? IBinder
-                ?: error("AppOpsService binder unavailable")
+                ?: return@lazy null
             val stub = Class.forName("com.android.internal.app.IAppOpsService\$Stub")
             val appOps = stub
                 .getMethod("asInterface", IBinder::class.java)
-                .invoke(null, binder)
-                ?: error("IAppOpsService unavailable")
+                .invoke(null, binder) ?: return@lazy null
+            val method = appOps.javaClass.getMethod(
+                "setMode",
+                Int::class.javaPrimitiveType,
+                Int::class.javaPrimitiveType,
+                String::class.java,
+                Int::class.javaPrimitiveType,
+            ).apply { isAccessible = true }
+            appOps to method
+        } catch (e: Throwable) {
+            Log.i(TAG, "WindowMute: AppOps lookup failed: ${e.message}")
+            null
+        }
+    }
+
+    fun setMuted(context: Context, packageName: String, uid: Int, muted: Boolean) {
+        runCatching {
+            val (appOps, setMode) = appOpsSetMode ?: error("AppOpsService unavailable")
             val mode = if (muted) AppOpsManager.MODE_IGNORED else AppOpsManager.MODE_ALLOWED
-            appOps.javaClass
-                .getMethod(
-                    "setMode",
-                    Int::class.javaPrimitiveType,
-                    Int::class.javaPrimitiveType,
-                    String::class.java,
-                    Int::class.javaPrimitiveType,
-                )
-                .invoke(appOps, opPlayAudio, uid, packageName, mode)
+            setMode.invoke(appOps, opPlayAudio, uid, packageName, mode)
             Log.i(TAG, "WindowMute: set muted=$muted uid=$uid package=$packageName")
         }.onFailure { error ->
             Log.i(TAG, "WindowMute: setMode failed muted=$muted uid=$uid package=$packageName error=${error.message}")

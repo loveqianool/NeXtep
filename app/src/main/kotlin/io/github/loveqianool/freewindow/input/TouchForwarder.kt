@@ -16,8 +16,12 @@ import android.view.MotionEvent
 object TouchForwarder {
     private const val TAG = "FreeWindow"
 
-    /** Mirrors the hidden InputManager.INJECT_INPUT_EVENT_MODE_ASYNC. */
-    private const val INJECT_INPUT_EVENT_MODE_ASYNC = 2
+    /**
+     * AOSP InputManager inject modes: ASYNC=0, WAIT_FOR_RESULT=1,
+     * WAIT_FOR_FINISH=2. Must be ASYNC — touch runs at 60-120Hz on the UI
+     * thread and must never block on dispatch.
+     */
+    private const val INJECT_INPUT_EVENT_MODE_ASYNC = 0
 
     private val injectMethod: java.lang.reflect.Method? by lazy {
         try {
@@ -44,34 +48,39 @@ object TouchForwarder {
         }
     }
 
-    private val getInstanceMethod: java.lang.reflect.Method? by lazy {
+    /** Cached — the instance never changes; don't reflect per touch event. */
+    private val inputManager: Any? by lazy {
         try {
-            InputManager::class.java.getMethod("getInstance").apply { isAccessible = true }
+            InputManager::class.java.getMethod("getInstance")
+                .apply { isAccessible = true }
+                .invoke(null)
         } catch (e: Throwable) {
-            Log.i(TAG, "getInstance lookup failed: ${e.message}")
+            Log.i(TAG, "InputManager.getInstance failed: ${e.message}")
             null
         }
     }
 
     /**
-     * Stamps [displayId] on [event] and injects it asynchronously into the
-     * input system. Returns true if the event was accepted.
+     * Stamps [displayId] on a copy of [event] and injects it asynchronously
+     * into the input system. Returns true if the event was accepted.
+     *
+     * The framework owns [event] (pooled); we inject a copy so async dispatch
+     * can't race the pool recycle.
      */
     fun forward(event: MotionEvent, displayId: Int): Boolean {
-        val getInstance = getInstanceMethod ?: return false
-        val inputManager = try {
-            getInstance.invoke(null)
-        } catch (e: Throwable) {
-            Log.i(TAG, "InputManager.getInstance failed: ${e.message}")
-            return false
-        }
+        val manager = inputManager ?: return false
         val inject = injectMethod ?: return false
-        if (!stampDisplayId(event, displayId)) return false
-        return try {
-            inject.invoke(inputManager, event, INJECT_INPUT_EVENT_MODE_ASYNC) as? Boolean ?: false
-        } catch (e: Throwable) {
-            Log.i(TAG, "injectInputEvent failed: ${e.message}")
-            false
+        val copy = MotionEvent.obtain(event)
+        try {
+            if (!stampDisplayId(copy, displayId)) return false
+            return try {
+                inject.invoke(manager, copy, INJECT_INPUT_EVENT_MODE_ASYNC) as? Boolean ?: false
+            } catch (e: Throwable) {
+                Log.i(TAG, "injectInputEvent failed: ${e.message}")
+                false
+            }
+        } finally {
+            copy.recycle()
         }
     }
 

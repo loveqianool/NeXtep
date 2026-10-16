@@ -178,6 +178,15 @@ class FreeWindowView @JvmOverloads constructor(
         titleToggleArmed = false
     }
 
+    /**
+     * Releases the SurfaceTexture. Call when the window is permanently closed
+     * (not on temporary detach like bringToFront). We return true from
+     * onSurfaceTextureDestroyed, so ownership is ours.
+     */
+    fun releaseSurfaceTexture() {
+        runCatching { textureView.surfaceTexture?.release() }
+    }
+
     companion object {
         private const val TAG = "FreeWindow"
     }

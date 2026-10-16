@@ -71,11 +71,15 @@ object WindowManager : WindowHost {
     fun openApp(context: Context, componentName: ComponentName): Int {
         val app = context.applicationContext
         init(app)
+        val wmRef = wm ?: run {
+            Log.w(TAG, "openApp: WindowManager unavailable")
+            return -1
+        }
         val id = nextId.getAndIncrement()
         val rect = defaultRect(app)
         val view = FreeWindowView(app, id, this)
         view.onSurfaceReady = { surface -> onSurfaceAvailable(id, surface) }
-        wm?.addView(view, windowParams(rect))
+        wmRef.addView(view, windowParams(rect))
         synchronized(zOrder) { zOrder.add(id) }
         windows[id] = WindowRecord(
             id = id,
@@ -96,6 +100,7 @@ object WindowManager : WindowHost {
         synchronized(zOrder) { zOrder.remove(id) }
         synchronized(savedRects) { savedRects.remove(id) }
         runCatching { wm?.removeView(rec.view) }
+        rec.view.releaseSurfaceTexture()
         surfaces.remove(id)?.let { runCatching { it.release() } }
         displays.remove(id)
         displayEngine?.release(id)
@@ -404,42 +409,68 @@ object WindowManager : WindowHost {
         }
     }
 
+    /** Cached field/method for displayId; the lookup never changes at runtime. */
+    private var displayIdAccessor: java.lang.reflect.AccessibleObject? = null
+    private var displayIdAccessorResolved = false
+
     private fun readDisplayId(info: ActivityManager.RunningTaskInfo): Int? {
-        var c: Class<*>? = info.javaClass
-        while (c != null) {
-            for (name in listOf("displayId", "mDisplayId")) {
+        if (!displayIdAccessorResolved) {
+            displayIdAccessorResolved = true
+            var c: Class<*>? = info.javaClass
+            while (c != null) {
+                for (name in listOf("displayId", "mDisplayId")) {
+                    runCatching {
+                        displayIdAccessor = c.getDeclaredField(name).apply { isAccessible = true }
+                        return@runCatching
+                    }
+                    if (displayIdAccessor != null) break
+                }
+                if (displayIdAccessor != null) break
+                c = c.superclass
+            }
+            if (displayIdAccessor == null) {
                 runCatching {
-                    return c.getDeclaredField(name).apply { isAccessible = true }.getInt(info)
+                    displayIdAccessor = info.javaClass.getMethod("getDisplayId")
+                        .apply { isAccessible = true }
                 }
             }
-            c = c.superclass
         }
-        runCatching {
-            return info.javaClass.getMethod("getDisplayId")
-                .apply { isAccessible = true }
-                .invoke(info) as? Int
+        return try {
+            when (val acc = displayIdAccessor) {
+                is java.lang.reflect.Field -> acc.getInt(info)
+                is java.lang.reflect.Method -> acc.invoke(info) as? Int
+                else -> null
+            }
+        } catch (e: Throwable) {
+            null
         }
-        return null
     }
 
-    private fun moveTaskToDisplay(taskId: Int, displayId: Int): Boolean {
-        return try {
+    /** Cached ATM service + move method; reflection is expensive per call. */
+    private val atmMove: Pair<Any, java.lang.reflect.Method>? by lazy {
+        try {
             val atm = Class.forName("android.app.ActivityTaskManager")
             val service = atm.getDeclaredMethod("getService")
                 .apply { isAccessible = true }
-                .invoke(null) ?: run {
-                    Log.i(TAG, "moveTaskToDisplay: getService returned null")
-                    return false
-                }
+                .invoke(null) ?: return@lazy null
             val method = service.javaClass.declaredMethods.firstOrNull {
                 (it.name == "moveRootTaskToDisplay" || it.name == "moveTaskToDisplay") &&
                     it.parameterTypes.size == 2 &&
                     it.parameterTypes[0] == Int::class.javaPrimitiveType
-            } ?: run {
-                Log.i(TAG, "moveTaskToDisplay: method not found")
-                return false
-            }
-            method.isAccessible = true
+            }?.apply { isAccessible = true } ?: return@lazy null
+            service to method
+        } catch (e: Throwable) {
+            Log.i(TAG, "ATM move method lookup failed: ${e.message}")
+            null
+        }
+    }
+
+    private fun moveTaskToDisplay(taskId: Int, displayId: Int): Boolean {
+        val (service, method) = atmMove ?: run {
+            Log.i(TAG, "moveTaskToDisplay: method not available")
+            return false
+        }
+        return try {
             Log.i(TAG, "moveTaskToDisplay: invoking ${method.name} task=$taskId display=$displayId")
             method.invoke(service, taskId, displayId)
             Log.i(TAG, "moveTaskToDisplay task=$taskId display=$displayId via ${method.name}")

@@ -54,15 +54,22 @@ object ImeHelper {
             } else {
                 params.flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
             }
-            val wm = view.context.getSystemService(WindowManager::class.java)
-                ?: run {
-                    Log.i(TAG, "setFocusable: WindowManager unavailable")
-                    return
-                }
+            val wm = wmCache[view.context.applicationContext] ?: run {
+                val w = view.context.getSystemService(WindowManager::class.java)
+                    ?: run {
+                        Log.i(TAG, "setFocusable: WindowManager unavailable")
+                        return
+                    }
+                wmCache[view.context.applicationContext] = w
+                w
+            }
             wm.updateViewLayout(view, params)
             Log.i(TAG, "setFocusable: focusable=$focusable")
         } catch (e: Throwable) {
             Log.i(TAG, "setFocusable failed: ${e.message}")
         }
     }
+
+    /** getSystemService is not free; called on every tap. Cache per app context. */
+    private val wmCache = java.util.WeakHashMap<android.content.Context, WindowManager>()
 }
