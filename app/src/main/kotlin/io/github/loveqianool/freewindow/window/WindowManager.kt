@@ -190,6 +190,34 @@ object WindowManager : WindowHost {
         wm?.updateViewLayout(rec.view, params)
     }
 
+    override fun onResizePreview(id: Int, rect: android.graphics.Rect) {
+        // Preview is drawn by ResizeHandler; nothing to do here.
+    }
+
+    override fun onResizeCommit(id: Int, rect: android.graphics.Rect) {
+        val rec = windows[id] ?: return
+        if (rec.isMaximized) return
+        val params = rec.view.layoutParams as? AndroidWindowManager.LayoutParams ?: return
+        params.width = rect.width()
+        params.height = rect.height()
+        // Keep the top-left anchored; ResizeHandler already adjusted x/y for
+        // left/top drags.
+        params.x = rect.left
+        params.y = rect.top
+        wm?.updateViewLayout(rec.view, params)
+        // Rebuild the VirtualDisplay at the new size; the task is moved over.
+        val surface = surfaces[id] ?: return
+        rebuildDisplay(id, surface)
+    }
+
+    override fun currentRect(id: Int): android.graphics.Rect {
+        val rec = windows[id] ?: return android.graphics.Rect()
+        val params = rec.view.layoutParams as? AndroidWindowManager.LayoutParams
+            ?: return android.graphics.Rect()
+        return android.graphics.Rect(params.x, params.y,
+            params.x + params.width, params.y + params.height)
+    }
+
     // ------------------------------------------------------------ internals
 
     private fun onSurfaceAvailable(id: Int, surface: Surface) {
@@ -373,7 +401,10 @@ object WindowManager : WindowHost {
         return AndroidWindowManager.LayoutParams(
             rect.width(),
             rect.height(),
-            AndroidWindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            // TYPE_PHONE (2002) sits below TYPE_INPUT_METHOD (2011); the IME
+            // stays visible above a maximized window. OVERLAY (2038) would
+            // cover it.
+            AndroidWindowManager.LayoutParams.TYPE_PHONE,
             ImeHelper.DEFAULT_FLAGS,
             PixelFormat.TRANSLUCENT,
         ).apply {
