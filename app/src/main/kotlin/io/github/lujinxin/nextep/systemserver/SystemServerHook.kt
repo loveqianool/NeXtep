@@ -44,9 +44,8 @@ object SystemServerHook {
             NeXtepLog.info("slot_display_config", "Installed package-independent slot capability matching")
         }
         HookGuard.run("freewindow_mute") { FreeWindowMuteHook.install() }
-        HookGuard.run("freewindow_ime_redirect") {
-            FreeWindowImeRedirectHook.install(module, classLoader)
-        }
+        // NB: FreeWindowImeRedirectHook.install() has its own HookGuard; do not wrap again.
+        FreeWindowImeRedirectHook.install(module, classLoader)
         if (!slotConfigInstalled && !slotVideoExitInstalled) {
             // Nothing was installed; keep the guard open for a potential future retry.
             installed.set(false)
