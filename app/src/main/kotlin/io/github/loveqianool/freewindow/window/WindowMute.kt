@@ -12,17 +12,20 @@ object WindowMute {
     /**
      * Mutes via `appops set` as root. Runs in systemui; no system_server
      * component needed (avoids the Vector module-reload issue).
+     * Executed on a bg thread; never block the UI.
      */
     fun setMuted(packageName: String, uid: Int, muted: Boolean) {
-        try {
-            val mode = if (muted) "ignore" else "allow"
-            val cmd = arrayOf("su", "-c", "appops set $packageName PLAY_AUDIO $mode")
-            val proc = Runtime.getRuntime().exec(cmd)
-            val exit = proc.waitFor()
-            FwLog.i("WindowMute: appops set $packageName PLAY_AUDIO $mode exit=$exit")
-        } catch (e: Throwable) {
-            FwLog.w("WindowMute: appops failed", e)
-        }
+        Thread {
+            try {
+                val mode = if (muted) "ignore" else "allow"
+                val proc = Runtime.getRuntime()
+                    .exec(arrayOf("su", "-c", "appops set $packageName PLAY_AUDIO $mode"))
+                val exit = proc.waitFor()
+                FwLog.i("WindowMute: appops set $packageName PLAY_AUDIO $mode exit=$exit")
+            } catch (e: Throwable) {
+                FwLog.w("WindowMute: appops failed", e)
+            }
+        }.start()
     }
 
     // Legacy broadcast API (unused, kept for reference).
