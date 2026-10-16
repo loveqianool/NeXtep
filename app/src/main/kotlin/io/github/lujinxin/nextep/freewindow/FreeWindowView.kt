@@ -3,7 +3,7 @@ package io.github.lujinxin.nextep.freewindow
 import android.content.Context
 import android.graphics.Color
 import android.graphics.Rect
-import android.graphics.Surface
+import android.view.Surface
 import android.graphics.SurfaceTexture
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
@@ -109,7 +109,7 @@ class FreeWindowView(
                 if (titleCarry) {
                     host.onWindowCarryRelease(windowId, event.rawX.toInt(), event.rawY.toInt())
                 } else if (!titleDragging) {
-                    host.onWindowTap(windowId)
+                    host.onWindowTap(this@FreeWindowView.windowId)
                 }
                 titleCarry = false
                 animate().alpha(1f).setDuration(120).start()
@@ -197,7 +197,7 @@ class FreeWindowView(
             surfaceTextureListener = surfaceListener
             setOnTouchListener { _, event ->
                 if (event.actionMasked == MotionEvent.ACTION_DOWN) {
-                    host.onWindowTap(windowId)
+                    host.onWindowTap(this@FreeWindowView.windowId)
                 }
                 false
             }

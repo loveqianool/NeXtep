@@ -1,6 +1,5 @@
 package io.github.lujinxin.nextep.freewindow
 
-import android.app.ActivityManager
 import android.app.ActivityOptions
 import android.content.ComponentName
 import android.content.Context
@@ -166,16 +165,12 @@ class FreeWindowManager(
     private fun resolveTaskId(record: Record) {
         if (record.state.taskId >= 0 || record.virtualDisplay == null) return
         val displayId = record.state.displayId
-        val match = runCatching {
-            val manager = appContext.getSystemService(ActivityManager::class.java) ?: return@runCatching null
-            @Suppress("DEPRECATION")
-            manager.getRunningTasks(100).lastOrNull { it.displayId == displayId }
-        }.getOrNull()
+        val match = taskRepository.runningTasks().lastOrNull { it.displayId == displayId }
         if (match != null) {
-            record.state = record.state.copy(taskId = match.id)
+            record.state = record.state.copy(taskId = match.taskId)
             NeXtepLog.info(
                 "freewindow",
-                "Resolved task window=${record.state.windowId} taskId=${match.id} display=$displayId",
+                "Resolved task window=${record.state.windowId} taskId=${match.taskId} display=$displayId",
             )
             notifyChanged()
             return
@@ -322,7 +317,7 @@ class FreeWindowManager(
         val record = find(windowId) ?: return
         if (record.state.mode == FreeWindowMode.MAXIMIZED) return
         val rect = Rect(record.state.rect).apply { offset(dx, dy) }
-        clampToScreen(rect)
+        rect.clampToScreen()
         record.state = record.state.copy(rect = rect)
         record.view?.setWindowRect(rect)
     }

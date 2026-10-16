@@ -113,8 +113,8 @@ class AppListPanel(context: Context, private val host: AppListPanelHost) : Frame
         }
         val scroller = ScrollView(context).apply {
             isVerticalScrollBarEnabled = false
-            addView(appsContainer, ScrollView.LayoutParams(
-                ScrollView.LayoutParams.MATCH_PARENT, ScrollView.LayoutParams.WRAP_CONTENT))
+            addView(appsContainer, FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT))
         }
         column.addView(scroller, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
