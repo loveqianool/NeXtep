@@ -1,9 +1,9 @@
 id=nextep
-name=NeXtep自由窗口
+name=FreeWindow
 version=1.2.2
 versionCode=10
 author=loveqianool
-description=悬浮球 + 自由窗口 + 单窗口静音 LSPosed module
+description=Floating ball + free windows + per-window mute LSPosed module
 minApiVersion=101
 targetApiVersion=102
 staticScope=false

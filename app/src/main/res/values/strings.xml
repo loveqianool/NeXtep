@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name" translatable="false">NeXtep自由窗口</string>
+    <string name="app_name" translatable="false">FreeWindow</string>
     <!-- Optional HTTPS JSON endpoint. Empty uses public GitHub Releases. -->
     <string name="update_manifest_url" translatable="false"></string>
     <string name="language_hans" translatable="false">简体中文</string>
