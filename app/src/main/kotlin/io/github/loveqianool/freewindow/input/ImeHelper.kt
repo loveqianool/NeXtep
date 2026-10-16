@@ -1,7 +1,6 @@
 package io.github.loveqianool.freewindow.input
 
 import android.util.Log
-import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 

@@ -62,10 +62,6 @@ class DisplayEngine(private val context: Context) {
         }
     }
 
-    fun releaseAll() {
-        displays.keys.toList().forEach(::release)
-    }
-
     private fun resolveFlags(): Int {
         var flags = DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY or
             DisplayManager.VIRTUAL_DISPLAY_FLAG_PRESENTATION

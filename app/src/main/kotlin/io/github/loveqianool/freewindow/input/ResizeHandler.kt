@@ -33,8 +33,6 @@ class ResizeHandler(
     interface Callback {
         /** Current window rect in screen coordinates, used as the drag start. */
         fun currentRect(): Rect
-        /** Drag in progress: show/refresh the dashed preview. */
-        fun onResizePreview(rect: Rect)
         /** Drag finished: commit the resize for real. */
         fun onResizeCommit(rect: Rect)
         /** Tap without drag on the resize area. */
@@ -63,7 +61,7 @@ class ResizeHandler(
     private var moved = false
 
     /** Touch listener to attach to the 36dp handle view. */
-    val touchListener = View.OnTouchListener { _, event ->
+    private val touchListener = View.OnTouchListener { _, event ->
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 startRect = Rect(callback.currentRect())
@@ -85,7 +83,6 @@ class ResizeHandler(
                 val preview = Rect(start.left, start.top, start.left + newW, start.top + newH)
                 lastPreview = Rect(preview)
                 showPreview(preview)
-                callback.onResizePreview(preview)
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 hidePreview()
@@ -156,7 +153,4 @@ class ResizeHandler(
         }
         previewView = null
     }
-
-    /** Remove the preview window, e.g. when the host window closes. */
-    fun release() = hidePreview()
 }

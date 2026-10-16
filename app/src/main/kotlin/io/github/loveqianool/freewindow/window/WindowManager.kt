@@ -39,7 +39,7 @@ object WindowManager : WindowHost {
     private const val TAG = "FreeWindow"
 
     /** All windows by id. */
-    val windows: MutableMap<Int, WindowRecord> = ConcurrentHashMap()
+    private val windows: MutableMap<Int, WindowRecord> = ConcurrentHashMap()
 
     private val displays = ConcurrentHashMap<Int, VirtualDisplay>()
     private val surfaces = ConcurrentHashMap<Int, Surface>()
@@ -190,10 +190,6 @@ object WindowManager : WindowHost {
         wm?.updateViewLayout(rec.view, params)
     }
 
-    override fun onResizePreview(id: Int, rect: android.graphics.Rect) {
-        // Preview is drawn by ResizeHandler; nothing to do here.
-    }
-
     override fun onResizeCommit(id: Int, rect: android.graphics.Rect) {
         Log.i(TAG, "onResizeCommit id=$id rect=$rect")
         val rec = windows[id] ?: run {
@@ -235,10 +231,6 @@ object WindowManager : WindowHost {
         } else {
             Log.i(TAG, "onResizeCommit: no vd for id=$id")
         }
-    }
-
-    override fun onSurfaceSizeChanged(id: Int) {
-        // No-op: resize uses vd.resize() directly, no rebuild needed.
     }
 
     override fun currentRect(id: Int): android.graphics.Rect {

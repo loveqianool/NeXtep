@@ -56,8 +56,6 @@ class FreeWindowView @JvmOverloads constructor(
         android.view.WindowManager.LayoutParams.TYPE_PHONE,
         object : ResizeHandler.Callback {
             override fun currentRect(): android.graphics.Rect = host.currentRect(windowId)
-            override fun onResizePreview(rect: android.graphics.Rect) =
-                host.onResizePreview(windowId, rect)
             override fun onResizeCommit(rect: android.graphics.Rect) =
                 host.onResizeCommit(windowId, rect)
             override fun onResizeAreaTap() {
@@ -86,7 +84,6 @@ class FreeWindowView @JvmOverloads constructor(
                 // Update the buffer size to match; otherwise the VD renders at
                 // the wrong scale.
                 st.setDefaultBufferSize(w, h)
-                host.onSurfaceSizeChanged(windowId)
             }
 
             // Return true: we keep the SurfaceTexture alive; WindowManager
