@@ -308,7 +308,7 @@ class FreeWindowView(
             visibility = View.GONE
             setOnTouchListener { _, event ->
                 if (event.actionMasked == MotionEvent.ACTION_UP) {
-                    host.onTopLeftTap(windowId)
+                    host.onTopLeftTap(this@FreeWindowView.windowId)
                 }
                 true
             }
