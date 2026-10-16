@@ -75,11 +75,15 @@ class FreeWindowView @JvmOverloads constructor(
         textureView.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
             override fun onSurfaceTextureAvailable(st: SurfaceTexture, w: Int, h: Int) {
                 Log.i(TAG, "surface ready window=$windowId ${w}x$h")
+                st.setDefaultBufferSize(w, h)
                 onSurfaceReady?.invoke(Surface(st))
             }
 
             override fun onSurfaceTextureSizeChanged(st: SurfaceTexture, w: Int, h: Int) {
                 Log.i(TAG, "surface size changed window=$windowId ${w}x$h")
+                // Update the buffer size to match; otherwise the VD renders at
+                // the wrong scale.
+                st.setDefaultBufferSize(w, h)
                 host.onSurfaceSizeChanged(windowId)
             }
 
