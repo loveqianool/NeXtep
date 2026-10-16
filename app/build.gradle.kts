@@ -11,7 +11,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "io.github.lujinxin.nextep"
+        applicationId = "io.github.loveqianool.nextep"
         minSdk = 35
         targetSdk = 36
         versionCode = 10

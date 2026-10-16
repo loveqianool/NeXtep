@@ -7,8 +7,8 @@ import java.net.URL
 import javax.net.ssl.HttpsURLConnection
 
 internal object UpdateChecker {
-    const val RELEASES_URL = "https://github.com/lujinxin/NeXtep/releases"
-    private const val API_URL = "https://api.github.com/repos/lujinxin/NeXtep/releases?per_page=100"
+    const val RELEASES_URL = "https://github.com/loveqianool/NeXtep/releases"
+    private const val API_URL = "https://api.github.com/repos/loveqianool/NeXtep/releases?per_page=100"
     private const val MAX_BYTES = 2 * 1024 * 1024
 
     data class Release(val version: String, val notes: String, val downloadUrl: String)

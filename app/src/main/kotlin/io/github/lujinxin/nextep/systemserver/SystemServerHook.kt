@@ -69,6 +69,7 @@ object SystemServerHook {
             module.hook(method).intercept(SlotDisplayConfigurationHooker())
             NeXtepLog.info("slot_display_config", "Installed package-independent slot capability matching")
         }
+        HookGuard.run("freewindow_mute") { FreeWindowMuteHook.install() }
         if (!aspectInstalled && !sizeCompatInstalled &&
             !slotConfigInstalled && !slotVideoExitInstalled && !landscapeRotationInstalled && !nativeLayersInstalled && !workspaceTasksInstalled && !workspaceHierarchyInstalled
         ) {

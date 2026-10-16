@@ -4,10 +4,9 @@ import android.util.Log
 import io.github.lujinxin.nextep.logging.NeXtepLog
 import io.github.lujinxin.nextep.launcher.ColorOsLauncherHook
 import io.github.lujinxin.nextep.multiapp.OplusMultiAppHook
-import io.github.lujinxin.nextep.framework.TaskSurfaceCompat
+import io.github.lujinxin.nextep.freewindow.FreeWindowSystemUiHook
 import io.github.lujinxin.nextep.safety.EmergencyDisable
 import io.github.lujinxin.nextep.safety.FeatureGate
-import io.github.lujinxin.nextep.systemui.SystemUiHook
 import io.github.lujinxin.nextep.systemserver.SystemServerHook
 import io.github.libxposed.api.XposedModule
 import io.github.libxposed.api.XposedModuleInterface.ModuleLoadedParam
@@ -44,13 +43,14 @@ class NeXtepHookEntry : XposedModule() {
 
         if (packageName == "com.android.systemui") {
             if (!EmergencyDisable.isRequested() && FeatureGate.SYSTEM_UI.defaultEnabled) {
-                TaskSurfaceCompat.initialize(param.defaultClassLoader)
-                SystemUiHook.install(this, param.defaultClassLoader)
+                // Free-window mode: the old workspace takeover UI is retired.
+                FreeWindowSystemUiHook.install(this, param.defaultClassLoader)
             }
             return
         }
 
-        if (packageName == "io.github.lujinxin.nextep") {
+        // Self-check uses the applicationId (runtime package), not the Kotlin package.
+        if (packageName == "io.github.loveqianool.nextep") {
             return
         }
 
