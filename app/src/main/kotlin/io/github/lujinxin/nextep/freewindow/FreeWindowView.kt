@@ -19,12 +19,14 @@ import android.widget.TextView
 import kotlin.math.hypot
 
 /**
- * A single free-floating app window. Lives inside a fullscreen FrameLayout
- * overlay container in the com.android.systemui process.
+ * A single free-floating app window. Added as its own system window in the
+ * com.android.systemui process (one WindowManager entry per window).
  *
- * Own position/size come from [setWindowRect] (FrameLayout.LayoutParams with
- * TOP|START gravity). Rendering surface is [textureView]; the manager wires
- * [onSurfaceReady] to attach a VirtualDisplay.
+ * Own position/size come from [setWindowRect] (tracked for drag bookkeeping;
+ * the actual window geometry is owned by the manager via WindowManager
+ * params). Rendering surface is [textureView]; the manager wires
+ * [onSurfaceReady] to attach a VirtualDisplay. The [SurfaceTexture] is
+ * preserved across remove/add (z-order changes) so the display survives.
  */
 class FreeWindowView(
     context: Context,
@@ -63,6 +65,8 @@ class FreeWindowView(
     private var resizeStartRawY = 0f
     private var resizeStartRect: Rect? = null
 
+    private var savedSurfaceTexture: SurfaceTexture? = null
+
     private val surfaceListener = object : TextureView.SurfaceTextureListener {
         override fun onSurfaceTextureAvailable(surface: SurfaceTexture, width: Int, height: Int) {
             onSurfaceReady?.invoke(Surface(surface))
@@ -70,7 +74,13 @@ class FreeWindowView(
 
         override fun onSurfaceTextureSizeChanged(surface: SurfaceTexture, width: Int, height: Int) = Unit
 
-        override fun onSurfaceTextureDestroyed(surface: SurfaceTexture): Boolean = true
+        override fun onSurfaceTextureDestroyed(surface: SurfaceTexture): Boolean {
+            // Keep the SurfaceTexture alive across remove/add (z-order changes):
+            // the VirtualDisplay keeps rendering into it, and we hand it back
+            // to the TextureView in onAttachedToWindow.
+            savedSurfaceTexture = surface
+            return true
+        }
 
         override fun onSurfaceTextureUpdated(surface: SurfaceTexture) = Unit
     }
@@ -188,7 +198,9 @@ class FreeWindowView(
         }
 
         textureView.apply {
-            setBackgroundColor(0xFF000000.toInt())
+            // NB: never set a background on a TextureView — it throws
+            // UnsupportedOperationException. The black backdrop lives on the
+            // parent column instead.
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 0,
@@ -205,6 +217,7 @@ class FreeWindowView(
 
         val contentColumn = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
+            setBackgroundColor(0xFF000000.toInt())
             layoutParams = LayoutParams(
                 LayoutParams.MATCH_PARENT,
                 LayoutParams.MATCH_PARENT,
@@ -232,6 +245,25 @@ class FreeWindowView(
         super.onDetachedFromWindow()
     }
 
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        // Re-hand the kept SurfaceTexture to the TextureView after a
+        // remove/add (z-order change). The VirtualDisplay never stopped
+        // rendering into it.
+        savedSurfaceTexture?.let { textureView.setSurfaceTexture(it) }
+    }
+
+    /** Explicitly stash the live SurfaceTexture before a removeView. */
+    fun preserveSurfaceTexture() {
+        textureView.surfaceTexture?.let { savedSurfaceTexture = it }
+    }
+
+    /** Drop the kept SurfaceTexture for good (window closed). */
+    fun releaseSurfaceTexture() {
+        runCatching { savedSurfaceTexture?.release() }
+        savedSurfaceTexture = null
+    }
+
     fun setAppInfo(icon: Drawable?, title: String) {
         iconView.setImageDrawable(icon)
         titleView.text = title
@@ -245,26 +277,18 @@ class FreeWindowView(
         maxBtn.text = if (maximized) "▣" else "⛶"
     }
 
+    /**
+     * The view fills its window; the window position/size is owned by the
+     * manager via WindowManager params. This just tracks the rect for
+     * [currentRect] (drag/carry bookkeeping).
+     */
+    private var windowRect = Rect()
+
     fun setWindowRect(rect: Rect) {
-        val lp = (layoutParams as? FrameLayout.LayoutParams)
-            ?: FrameLayout.LayoutParams(rect.width(), rect.height(), Gravity.TOP or Gravity.START)
-        lp.width = rect.width()
-        lp.height = rect.height()
-        lp.leftMargin = rect.left
-        lp.topMargin = rect.top
-        lp.gravity = Gravity.TOP or Gravity.START
-        layoutParams = lp
-        requestLayout()
+        windowRect.set(rect)
     }
 
-    fun currentRect(): Rect {
-        val lp = layoutParams as? FrameLayout.LayoutParams
-        val w = if (lp != null && lp.width > 0) lp.width else width
-        val h = if (lp != null && lp.height > 0) lp.height else height
-        val l = lp?.leftMargin ?: 0
-        val t = lp?.topMargin ?: 0
-        return Rect(l, t, l + w, t + h)
-    }
+    fun currentRect(): Rect = Rect(windowRect)
 
     /** The live Surface wrapping the current SurfaceTexture, or null if unavailable. */
     fun currentSurface(): Surface? {

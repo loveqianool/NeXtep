@@ -1,7 +1,6 @@
 package io.github.lujinxin.nextep.freewindow
 
 import android.content.Context
-import android.graphics.Rect
 import android.graphics.drawable.GradientDrawable
 import android.util.TypedValue
 import android.view.Gravity
@@ -15,7 +14,7 @@ import android.widget.TextView
  * app list. A badge shows the number of parked (background) windows.
  *
  * Movement itself is delegated to [FloatingBallHost]: this view only reports
- * touch deltas; the host repositions it via [setBallRect].
+ * touch deltas; the host repositions its window.
  */
 class FloatingBallView(context: Context, private val host: FloatingBallHost) : FrameLayout(context) {
 
@@ -108,20 +107,6 @@ class FloatingBallView(context: Context, private val host: FloatingBallHost) : F
     fun setParkedCount(n: Int) {
         badge.visibility = if (n > 0) View.VISIBLE else View.GONE
         if (n > 0) badge.text = if (n > 99) "99+" else n.toString()
-    }
-
-    /** Positions the ball: 56dp x 56dp at the given rect's top-left. */
-    fun setBallRect(rect: Rect) {
-        layoutParams = LayoutParams(dp(56), dp(56), Gravity.TOP or Gravity.START).apply {
-            leftMargin = rect.left
-            topMargin = rect.top
-        }
-    }
-
-    /** Reads the ball rect back from its LayoutParams. */
-    fun currentRect(): Rect {
-        val lp = layoutParams as? LayoutParams ?: return Rect(0, 0, 0, 0)
-        return Rect(lp.leftMargin, lp.topMargin, lp.leftMargin + lp.width, lp.topMargin + lp.height)
     }
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()

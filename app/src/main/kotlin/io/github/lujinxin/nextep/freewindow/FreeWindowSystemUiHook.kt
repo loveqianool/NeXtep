@@ -4,12 +4,10 @@ import android.animation.ValueAnimator
 import android.content.Context
 import android.graphics.PixelFormat
 import android.graphics.Rect
-import android.graphics.Region
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
-import android.widget.FrameLayout
-import java.lang.reflect.Proxy
+import android.widget.Toast
 import io.github.lujinxin.nextep.apps.LauncherAppRepository
 import io.github.lujinxin.nextep.logging.NeXtepLog
 import io.github.lujinxin.nextep.systemui.SystemUiWindowTypeResolver
@@ -18,55 +16,14 @@ import kotlin.math.max
 /**
  * SystemUI-side entry for the free-window mode.
  *
- * Waits for the SystemUI Application to exist, then adds one fullscreen
- * overlay window (TYPE_PHONE, touchable, not focusable) and hosts inside it:
- * [FreeWindowManager] windows, the [FloatingBallView] and the [AppListPanel].
+ * Every UI element is its own system window — the floating ball, the app-list
+ * panel, and each free window — so touches outside any of them fall through
+ * to the system underneath naturally (no fullscreen overlay, no
+ * touchable-insets hack; the insets approach proved unreliable on some ROMs).
  * The old workspace takeover UI is no longer installed.
  */
 object FreeWindowSystemUiHook {
     private var installed = false
-
-    /** InternalInsetsInfo.TOUCHABLE_INSETS_REGION — hidden constant, value 3. */
-    private const val TOUCHABLE_INSETS_REGION = 3
-
-    private fun installTouchableRegion(container: FrameLayout, regionOf: () -> Region) {
-        var insetsFired = false
-        runCatching {
-            val listenerClass =
-                Class.forName("android.view.ViewTreeObserver\$OnComputeInternalInsetsListener")
-            val proxy = Proxy.newProxyInstance(
-                listenerClass.classLoader,
-                arrayOf(listenerClass),
-            ) { _, method, arguments ->
-                if (method.name == "onComputeInternalInsets") {
-                    val info = arguments?.firstOrNull()
-                    if (info != null) {
-                        runCatching {
-                            info.javaClass
-                                .getMethod("setTouchableInsets", Int::class.javaPrimitiveType)
-                                .invoke(info, TOUCHABLE_INSETS_REGION)
-                            val region =
-                                info.javaClass.getField("touchableRegion").get(info) as Region
-                            region.set(regionOf())
-                            if (!insetsFired) {
-                                insetsFired = true
-                                NeXtepLog.info("freewindow", "onComputeInternalInsets fired, region=$region")
-                            }
-                        }.onFailure { error ->
-                            NeXtepLog.warn("freewindow", "Insets compute failed", error)
-                        }
-                    }
-                }
-                null
-            }
-            container.viewTreeObserver.javaClass
-                .getMethod("addOnComputeInternalInsetsListener", listenerClass)
-                .invoke(container.viewTreeObserver, proxy)
-            NeXtepLog.info("freewindow", "Touchable region passthrough installed")
-        }.onFailure { error ->
-            NeXtepLog.warn("freewindow", "Touchable region hook failed", error)
-        }
-    }
 
     fun install() {
         // Trigger via polling instead of hooking Application.onCreate: on some
@@ -126,135 +83,131 @@ object FreeWindowSystemUiHook {
         val metrics = appContext.resources.displayMetrics
         val density = metrics.density
 
-        val container = FrameLayout(appContext)
-        val params = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.MATCH_PARENT,
-            WindowManager.LayoutParams.MATCH_PARENT,
-            windowType,
-            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED or
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
-            PixelFormat.TRANSLUCENT,
-        ).apply {
-            gravity = Gravity.TOP or Gravity.START
-            title = "NeXtepFreeWindows"
-            layoutInDisplayCutoutMode =
-                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
-        }
-        runCatching {
-            windowManager.addView(container, params)
-        }.onFailure { error ->
-            NeXtepLog.warn("freewindow", "addView failed", error)
-            return
-        }
-        NeXtepLog.info("freewindow", "Overlay container added")
+        fun dp(v: Int) = (v * density).toInt()
 
+        // ---------------------------------------------------------------- ball
+        val ballSize = dp(56)
+        var ballX = metrics.widthPixels - ballSize - dp(12)
+        var ballY = metrics.heightPixels / 2 - ballSize / 2
         var ballRef: FloatingBallView? = null
         var panelRef: AppListPanel? = null
         var panelRect: Rect? = null
 
-        fun dp(v: Int) = (v * density).toInt()
-
-        fun setWindowFocusable(focusable: Boolean) {
-            if (focusable) {
-                params.flags = params.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()
-            } else {
-                params.flags = params.flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-            }
-            runCatching { windowManager.updateViewLayout(container, params) }
-                .onFailure { error -> NeXtepLog.warn("freewindow", "updateViewLayout failed", error) }
+        fun ballParams() = WindowManager.LayoutParams(
+            ballSize,
+            ballSize,
+            windowType,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+            PixelFormat.TRANSLUCENT,
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            x = ballX
+            y = ballY
+            title = "NeXtepFreeBall"
         }
 
-        val manager = FreeWindowManager(
-            appContext,
-            container,
-            ballBounds = { ballRef?.currentRect()?.let { Rect(it) } },
-            restackOverlay = {
-                panelRef?.let { panel ->
-                    if (panel.visibility == View.VISIBLE && panel.parent != null) {
-                        container.removeView(panel)
-                        container.addView(panel)
-                    }
-                }
-                ballRef?.let { ball ->
-                    if (ball.parent != null) {
-                        container.removeView(ball)
-                        container.addView(ball)
-                    }
-                }
-            },
-        )
-
-        fun clampBall(rect: Rect) {
-            val w = rect.width()
-            val h = rect.height()
-            rect.offsetTo(
-                rect.left.coerceIn(0, max(0, metrics.widthPixels - w)),
-                rect.top.coerceIn(0, max(0, metrics.heightPixels - h)),
-            )
-        }
-
-        fun positionPanel() {
+        /** Keep the ball above windows and the panel. */
+        fun ensureBallOnTop() {
             val ball = ballRef ?: return
-            val panel = panelRef ?: return
-            val br = ball.currentRect()
+            runCatching {
+                windowManager.removeViewImmediate(ball)
+                windowManager.addView(ball, ballParams())
+            }.onFailure { error -> NeXtepLog.warn("freewindow", "Ball restack failed", error) }
+        }
+
+        // --------------------------------------------------------------- panel
+
+        fun positionPanel(): Rect? {
+            val bw = ballSize
             val pw = dp(320)
             val ph = (metrics.heightPixels * 0.62).toInt()
-            val left = if (br.centerX() < metrics.widthPixels / 2) {
-                (br.right + dp(8)).coerceAtMost(metrics.widthPixels - pw)
+            val bcx = ballX + bw / 2
+            val bcy = ballY + bw / 2
+            val left = if (bcx < metrics.widthPixels / 2) {
+                (ballX + bw + dp(8)).coerceAtMost(metrics.widthPixels - pw)
             } else {
-                (br.left - dp(8) - pw).coerceAtLeast(0)
+                (ballX - dp(8) - pw).coerceAtLeast(0)
             }
-            val top = (br.centerY() - ph / 2).coerceIn(0, max(0, metrics.heightPixels - ph))
-            panelRect = Rect(left, top, left + pw, top + ph)
-            panel.setPanelRect(panelRect!!)
+            val top = (bcy - ph / 2).coerceIn(0, max(0, metrics.heightPixels - ph))
+            return Rect(left, top, left + pw, top + ph).also { panelRect = it }
         }
 
         fun hidePanel() {
-            panelRef?.visibility = View.GONE
-            panelRect = null
-            setWindowFocusable(false)
-        }
-
-        /** User-requested exit: tear the overlay down completely. */
-        fun exitOverlay() {
-            NeXtepLog.info("freewindow", "Exiting overlay by user request")
-            runCatching { manager.shutdown() }
-            runCatching { windowManager.removeViewImmediate(container) }
-            installed = false
-            runCatching {
-                android.widget.Toast.makeText(appContext, "FreeWindow 已退出", android.widget.Toast.LENGTH_SHORT).show()
+            panelRef?.let { panel ->
+                runCatching { windowManager.removeView(panel) }
+                panel.visibility = View.GONE
             }
+            panelRect = null
         }
 
         fun showPanel() {
             val panel = panelRef ?: return
-            positionPanel()
-            panel.visibility = View.VISIBLE
-            setWindowFocusable(true)
-            panel.refresh()
-            if (panel.parent != null) {
-                container.removeView(panel)
-                container.addView(panel)
+            val rect = positionPanel() ?: return
+            val params = WindowManager.LayoutParams(
+                rect.width(),
+                rect.height(),
+                windowType,
+                // Focusable (no NOT_FOCUSABLE) so the search field takes input;
+                // NOT_TOUCH_MODAL keeps outside touches falling through.
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+                PixelFormat.TRANSLUCENT,
+            ).apply {
+                gravity = Gravity.TOP or Gravity.START
+                x = rect.left
+                y = rect.top
+                title = "NeXtepFreePanel"
             }
+            runCatching {
+                runCatching { windowManager.removeViewImmediate(panel) }
+                windowManager.addView(panel, params)
+            }.onFailure { error ->
+                NeXtepLog.warn("freewindow", "Panel addView failed", error)
+                return
+            }
+            panel.visibility = View.VISIBLE
+            panel.refresh()
+            ensureBallOnTop()
+        }
+
+        fun moveBallTo(x: Int, y: Int) {
+            ballX = x.coerceIn(0, max(0, metrics.widthPixels - ballSize))
+            ballY = y.coerceIn(0, max(0, metrics.heightPixels - ballSize))
             ballRef?.let { ball ->
-                if (ball.parent != null) {
-                    container.removeView(ball)
-                    container.addView(ball)
-                }
+                runCatching { windowManager.updateViewLayout(ball, ballParams()) }
+                    .onFailure { error -> NeXtepLog.warn("freewindow", "Ball move failed", error) }
+            }
+            if (panelRef?.visibility == View.VISIBLE) {
+                // Keep the panel anchored while the ball moves.
+                showPanel()
             }
         }
 
+        val manager = FreeWindowManager(
+            appContext,
+            windowManager,
+            windowType,
+            ballBounds = { Rect(ballX, ballY, ballX + ballSize, ballY + ballSize) },
+            restackOverlay = { ensureBallOnTop() },
+        )
+
+        /** User-requested exit: tear everything down. */
+        fun exitOverlay() {
+            NeXtepLog.info("freewindow", "Exiting overlay by user request")
+            runCatching { manager.shutdown() }
+            panelRef?.let { runCatching { windowManager.removeViewImmediate(it) } }
+            ballRef?.let { runCatching { windowManager.removeViewImmediate(it) } }
+            installed = false
+            runCatching {
+                Toast.makeText(appContext, "FreeWindow 已退出", Toast.LENGTH_SHORT).show()
+            }
+        }
+
+        // --------------------------------------------------------------- hosts
+
         val ballHost = object : FloatingBallHost {
             override fun onBallMove(dx: Int, dy: Int) {
-                val ball = ballRef ?: return
-                val rect = ball.currentRect().apply {
-                    offset(dx, dy)
-                    clampBall(this)
-                }
-                ball.setBallRect(rect)
-                if (panelRef?.visibility == View.VISIBLE) positionPanel()
+                moveBallTo(ballX + dx, ballY + dy)
             }
 
             override fun onBallTap() {
@@ -267,19 +220,19 @@ object FreeWindowSystemUiHook {
             }
 
             override fun onBallRelease() {
-                val ball = ballRef ?: return
-                val rect = ball.currentRect()
-                val targetLeft = if (rect.centerX() < metrics.widthPixels / 2) {
+                val targetX = if (ballX + ballSize / 2 < metrics.widthPixels / 2) {
                     0
                 } else {
-                    metrics.widthPixels - rect.width()
+                    metrics.widthPixels - ballSize
                 }
-                if (targetLeft == rect.left) return
-                ValueAnimator.ofInt(rect.left, targetLeft).apply {
+                if (targetX == ballX) return
+                val startX = ballX
+                val startY = ballY
+                ValueAnimator.ofInt(startX, targetX).apply {
                     duration = 200
                     addUpdateListener { anim ->
                         val v = anim.animatedValue as Int
-                        ball.setBallRect(Rect(v, rect.top, v + rect.width(), rect.top + rect.height()))
+                        moveBallTo(v, startY)
                     }
                     start()
                 }
@@ -323,43 +276,19 @@ object FreeWindowSystemUiHook {
             override fun onPanelClose() = hidePanel()
         }
 
-        val ballSize = dp(56)
+        // --------------------------------------------------------------- views
+
         val ball = FloatingBallView(appContext, ballHost).also { ballRef = it }
-        container.addView(ball)
-        ball.setBallRect(
-            Rect(
-                metrics.widthPixels - ballSize - dp(12),
-                metrics.heightPixels / 2 - ballSize / 2,
-                metrics.widthPixels - dp(12),
-                metrics.heightPixels / 2 + ballSize / 2,
-            ),
-        )
+        runCatching {
+            windowManager.addView(ball, ballParams())
+        }.onFailure { error ->
+            NeXtepLog.warn("freewindow", "Ball addView failed", error)
+            return
+        }
 
         val panel = AppListPanel(appContext, panelHost).also { panelRef = it }
         panel.visibility = View.GONE
-        container.addView(panel)
-
-        // The overlay is fullscreen: restrict its touchable region to the ball,
-        // open panel and live windows so touches elsewhere fall through to the
-        // system underneath. Same mechanism TopAppStripView used for passthrough.
-        installTouchableRegion(container) {
-            val region = Region()
-            for (state in manager.windows()) {
-                if (state.mode == FreeWindowMode.PARKED) continue
-                region.union(
-                    if (state.mode == FreeWindowMode.MAXIMIZED) {
-                        Rect(0, 0, metrics.widthPixels, metrics.heightPixels)
-                    } else {
-                        Rect(state.rect)
-                    },
-                )
-            }
-            ballRef?.let { region.union(it.currentRect()) }
-            if (panel.visibility == View.VISIBLE) {
-                panelRect?.let { region.union(it) }
-            }
-            region
-        }
+        // Added on demand by showPanel().
 
         manager.setListener(object : FreeWindowManager.Listener {
             override fun onChanged() {

@@ -4,6 +4,7 @@ import android.app.ActivityOptions
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.graphics.PixelFormat
 import android.graphics.Rect
 import android.hardware.display.VirtualDisplay
 import android.os.Handler
@@ -11,7 +12,7 @@ import android.os.Looper
 import android.view.Gravity
 import android.view.Surface
 import android.view.View
-import android.widget.FrameLayout
+import android.view.WindowManager
 import io.github.lujinxin.nextep.display.SlotGeometry
 import io.github.lujinxin.nextep.display.VirtualDisplayFactory
 import io.github.lujinxin.nextep.framework.ActivityTaskManagerCompat
@@ -23,21 +24,28 @@ import kotlin.math.min
 /**
  * Owns free windows in the systemui process.
  *
+ * Each window is its own system window ([windowType], one WindowManager entry
+ * per window), so touches outside a window fall through to the system
+ * underneath naturally — no fullscreen overlay, no touchable-insets hack.
  * Each window gets its own VirtualDisplay (named "NeXtep-slot-<id>" so the
  * existing system_server insets hooks keep applying), rendered into the
- * window's TextureView. Window rects are free; z-order follows list order.
+ * window's TextureView.
  *
- * The overlay container, floating ball and app-list panel are owned by
- * FreeWindowSystemUiHook; this manager only manipulates window views and
- * calls [restackOverlay] after any z-order change so the hook can keep
+ * Z-order follows add sequence; [bringToFront] re-adds a window to raise it.
+ * The view preserves its SurfaceTexture across the remove/add so the
+ * VirtualDisplay survives the reorder.
+ *
+ * The floating ball and app-list panel are owned by FreeWindowSystemUiHook;
+ * [restackOverlay] is called after z-order changes so the hook can keep
  * panel/ball above windows.
  */
 class FreeWindowManager(
     context: Context,
-    private val container: FrameLayout,
+    private val windowManager: WindowManager,
+    private val windowType: Int,
     /** Screen-space bounds of the floating ball, or null when unknown. */
     private val ballBounds: () -> Rect?,
-    /** Re-add panel/ball above window views after z-order changes. */
+    /** Re-add panel/ball above windows after z-order changes. */
     private val restackOverlay: () -> Unit,
 ) : FreeWindowViewHost {
 
@@ -54,6 +62,7 @@ class FreeWindowManager(
     private data class Record(
         var state: FreeWindowState,
         var view: FreeWindowView? = null,
+        var params: WindowManager.LayoutParams? = null,
         var virtualDisplay: VirtualDisplay? = null,
         var preMaxRect: Rect? = null,
         var launchAttempts: Int = 0,
@@ -103,15 +112,23 @@ class FreeWindowManager(
         val icon = runCatching {
             appContext.packageManager.getActivityIcon(component)
         }.getOrNull()
+        val params = windowParamsFor(rect)
         val view = FreeWindowView(appContext, windowId, this).apply {
             setAppInfo(icon, label)
             setWindowRect(rect)
             onSurfaceReady = { surface -> onViewSurfaceReady(record, surface) }
         }
         record.view = view
+        record.params = params
         record.state = record.state.copy(icon = icon)
         records += record
-        container.addView(view, layoutParamsFor(rect))
+        runCatching {
+            windowManager.addView(view, params)
+        }.onFailure { error ->
+            NeXtepLog.error("freewindow", "addView failed window=$windowId", error)
+            records.remove(record)
+            return -1
+        }
         restackOverlay()
         notifyChanged()
         NeXtepLog.info("freewindow", "Launched window=$windowId component=$component rect=$rect")
@@ -195,7 +212,13 @@ class FreeWindowManager(
                 .onFailure { error -> NeXtepLog.warn("freewindow", "removeTask failed task=$taskId", error) }
         }
         runCatching { record.virtualDisplay?.release() }
-        record.view?.let { container.removeView(it) }
+        record.virtualDisplay = null
+        record.view?.let { view ->
+            runCatching { windowManager.removeViewImmediate(view) }
+            view.releaseSurfaceTexture()
+        }
+        record.view = null
+        record.params = null
         records.remove(record)
         NeXtepLog.info("freewindow", "Closed window=$windowId")
         notifyChanged()
@@ -224,9 +247,9 @@ class FreeWindowManager(
     }
 
     /**
-     * Unpark: reorder without detach (View.bringToFront never detaches, so
-     * the SurfaceTexture survives) and show the view again. Instant restore,
-     * no surface rebind needed.
+     * Unpark: show the view again and re-add its window to raise z-order.
+     * The view was only INVISIBLE (never detached), so its SurfaceTexture is
+     * still live; bringToFront preserves it across the remove/add.
      */
     fun unparkWindow(windowId: Int) {
         val record = find(windowId) ?: return
@@ -239,22 +262,15 @@ class FreeWindowManager(
             record.virtualDisplay = null
             record.state = record.state.copy(taskId = -1, displayId = -1, mode = FreeWindowMode.WINDOWED)
             val view = record.view ?: return
-            records.remove(record)
-            records += record
-            view.bringToFront()
             view.visibility = View.VISIBLE
-            restackOverlay()
+            bringToFront(windowId)
             view.currentSurface()?.let { surface -> onViewSurfaceReady(record, surface) }
             notifyChanged()
             return
         }
         record.state = record.state.copy(mode = FreeWindowMode.WINDOWED)
-        val view = record.view ?: return
-        records.remove(record)
-        records += record
-        view.bringToFront()
-        view.visibility = View.VISIBLE
-        restackOverlay()
+        record.view?.visibility = View.VISIBLE
+        bringToFront(windowId)
         NeXtepLog.info("freewindow", "Unparked window=$windowId task=${record.state.taskId}")
         notifyChanged()
     }
@@ -292,10 +308,18 @@ class FreeWindowManager(
             return
         }
         val view = record.view ?: return
+        val params = record.params ?: return
         records.remove(record)
         records += record
-        // View.bringToFront reorders without detach: the SurfaceTexture survives.
-        view.bringToFront()
+        // Re-add the window to raise its z-order. The view preserves its
+        // SurfaceTexture across the remove/add so the VirtualDisplay survives.
+        view.preserveSurfaceTexture()
+        runCatching {
+            windowManager.removeViewImmediate(view)
+            windowManager.addView(view, params)
+        }.onFailure { error ->
+            NeXtepLog.warn("freewindow", "bringToFront failed window=$windowId", error)
+        }
         restackOverlay()
         notifyChanged()
     }
@@ -324,8 +348,8 @@ class FreeWindowManager(
         if (record.state.mode == FreeWindowMode.MAXIMIZED) return
         val rect = Rect(record.state.rect).apply { offset(dx, dy) }
         rect.clampToScreen()
-        record.state = record.state.copy(rect = rect)
-        record.view?.setWindowRect(rect)
+        // Live drag: move the window, no display resize needed.
+        applyRect(record, rect, resizeDisplay = false)
     }
 
     override fun onWindowCarryRelease(windowId: Int, centerX: Int, centerY: Int) {
@@ -372,6 +396,18 @@ class FreeWindowManager(
     private fun applyRect(record: Record, rect: Rect, resizeDisplay: Boolean) {
         record.state = record.state.copy(rect = Rect(rect))
         record.view?.setWindowRect(rect)
+        val params = record.params
+        val view = record.view
+        if (params != null && view != null) {
+            params.x = rect.left
+            params.y = rect.top
+            params.width = rect.width()
+            params.height = rect.height()
+            runCatching { windowManager.updateViewLayout(view, params) }
+                .onFailure { error ->
+                    NeXtepLog.warn("freewindow", "updateViewLayout failed window=${record.state.windowId}", error)
+                }
+        }
         if (resizeDisplay) {
             runCatching {
                 record.virtualDisplay?.resize(rect.width(), rect.height(), densityDpi)
@@ -391,11 +427,19 @@ class FreeWindowManager(
         listener?.onChanged()
     }
 
-    private fun layoutParamsFor(rect: Rect) =
-        FrameLayout.LayoutParams(rect.width(), rect.height()).apply {
-            leftMargin = rect.left
-            topMargin = rect.top
+    private fun windowParamsFor(rect: Rect) =
+        WindowManager.LayoutParams(
+            rect.width(),
+            rect.height(),
+            windowType,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+            PixelFormat.TRANSLUCENT,
+        ).apply {
             gravity = Gravity.TOP or Gravity.START
+            x = rect.left
+            y = rect.top
+            title = "NeXtepFreeWindow"
         }
 
     private fun defaultRect(): Rect {

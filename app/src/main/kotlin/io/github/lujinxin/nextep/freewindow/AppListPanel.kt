@@ -165,13 +165,11 @@ class AppListPanel(context: Context, private val host: AppListPanelHost) : Frame
         }
     }
 
-    /** Position this panel inside the fullscreen overlay container. */
+    /**
+     * No-op kept for API compatibility: the panel now fills its own window,
+     * whose position is owned by the hook via WindowManager params.
+     */
     fun setPanelRect(rect: Rect) {
-        layoutParams = LayoutParams(rect.width(), rect.height()).apply {
-            gravity = Gravity.TOP or Gravity.START
-            leftMargin = rect.left
-            topMargin = rect.top
-        }
     }
 
     private fun sectionLabel(text: String): TextView = TextView(context).apply {
