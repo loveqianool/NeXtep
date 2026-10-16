@@ -4,7 +4,7 @@ import android.content.res.Configuration
 import android.util.Log
 import io.github.libxposed.api.XposedInterface
 import io.github.libxposed.api.XposedModule
-import io.github.loveqianool.freewindow.FwLog
+import android.util.Log
 import io.github.loveqianool.freewindow.window.WindowMute
 
 /**
@@ -19,12 +19,6 @@ object ServerHook {
     fun install(module: XposedModule, classLoader: ClassLoader) {
         if (installed) return
         installed = true
-        try {
-            val codeSource = ServerHook::class.java.protectionDomain?.codeSource?.location
-            FwLog.i("ServerHook loaded from: $codeSource")
-        } catch (e: Throwable) {
-            FwLog.i("ServerHook codeSource unavailable: ${e.message}")
-        }
         installDisplayHook(module, classLoader)
         installMuteReceiver()
     }
@@ -34,14 +28,14 @@ object ServerHook {
      * which holds MANAGE_APP_OPS_MODES — systemui does not.
      */
     private fun installMuteReceiver() {
-        FwLog.i("installMuteReceiver: starting")
+        Log.i("installMuteReceiver: starting")
         try {
             val atClass = Class.forName("android.app.ActivityThread")
             val app = atClass.getDeclaredMethod("currentApplication")
                 .apply { isAccessible = true }
                 .invoke(null) as? android.content.Context
                 ?: run {
-                    FwLog.w("mute receiver: no app context")
+                    Log.w("mute receiver: no app context")
                     return
                 }
             val receiver = object : android.content.BroadcastReceiver() {
@@ -58,9 +52,9 @@ object ServerHook {
                 android.content.IntentFilter(WindowMute.ACTION_MUTE),
                 android.content.Context.RECEIVER_EXPORTED,
             )
-            FwLog.i("mute receiver registered")
+            Log.i("mute receiver registered")
         } catch (e: Throwable) {
-            FwLog.w("mute receiver install failed", e)
+            Log.w("mute receiver install failed", e)
         }
     }
 
@@ -87,9 +81,9 @@ object ServerHook {
                 String::class.java, Int::class.javaPrimitiveType,
             ).apply { isAccessible = true }
                 .invoke(appOps, op, uid, packageName, mode)
-            FwLog.i("mute: set muted=$muted uid=$uid pkg=$packageName")
+            Log.i("mute: set muted=$muted uid=$uid pkg=$packageName")
         } catch (e: Throwable) {
-            FwLog.i("mute failed: ${e.javaClass.simpleName}: ${e.message}")
+            Log.i("mute failed: ${e.javaClass.simpleName}: ${e.message}")
         }
     }
 

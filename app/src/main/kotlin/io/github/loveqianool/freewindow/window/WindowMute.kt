@@ -1,6 +1,6 @@
 package io.github.loveqianool.freewindow.window
 
-import io.github.loveqianool.freewindow.FwLog
+import android.util.Log
 
 /**
  * Per-window mute via broadcast to system_server.
@@ -31,9 +31,9 @@ object WindowMute {
                 putExtra(EXTRA_MUTED, muted)
             }
             context.sendBroadcast(intent)
-            FwLog.i("WindowMute: broadcast muted=$muted uid=$uid package=$packageName")
+            Log.i("WindowMute: broadcast muted=$muted uid=$uid package=$packageName")
         } catch (e: Throwable) {
-            FwLog.w("WindowMute: broadcast failed", e)
+            Log.w("WindowMute: broadcast failed", e)
         }
     }
 }
