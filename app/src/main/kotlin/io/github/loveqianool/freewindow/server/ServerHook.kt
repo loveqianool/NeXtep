@@ -86,6 +86,7 @@ object ServerHook {
     }
 
     private fun installDisplayHook(module: XposedModule, classLoader: ClassLoader) {
+        try {
             val displayClass = classLoader.loadClass("com.android.server.wm.DisplayContent")
             val method = displayClass.declaredMethods.firstOrNull {
                 it.name == "computeScreenConfiguration" &&
