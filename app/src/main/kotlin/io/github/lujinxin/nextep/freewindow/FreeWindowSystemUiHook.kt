@@ -79,7 +79,11 @@ object FreeWindowSystemUiHook {
             var attempts = 0
             fun poll() {
                 if (installed) return
-                val app = runCatching { android.app.ActivityThread.currentApplication() }.getOrNull()
+                // Reflective: ActivityThread is not visible to the compile SDK.
+                val app = runCatching {
+                    val atClass = Class.forName("android.app.ActivityThread")
+                    atClass.getMethod("currentApplication").invoke(null) as? Context
+                }.getOrNull()
                 if (app != null) {
                     runCatching { onSystemUiReady(app) }
                         .onFailure { error -> NeXtepLog.warn("freewindow", "Overlay setup failed", error) }
