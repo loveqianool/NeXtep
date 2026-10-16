@@ -74,8 +74,6 @@ class FreeWindowManager(
 
     fun windows(): List<FreeWindowState> = records.map { it.state }
 
-    fun parkedCount(): Int = records.count { it.state.mode == FreeWindowMode.PARKED }
-
     // ------------------------------------------------------------------ launch
 
     /**
@@ -270,8 +268,7 @@ class FreeWindowManager(
      * Park a window: the task STAYS on its VirtualDisplay, resumed and still
      * rendering, so the app keeps believing it is in the foreground. Only the
      * view is hidden (INVISIBLE, never detached, so the SurfaceTexture and
-     * the display surface survive untouched). This is the whole point of the
-     * floating-ball background: fooled apps don't pause.
+     * the display surface survive untouched).
      */
     fun parkWindow(windowId: Int) {
         val record = find(windowId) ?: return

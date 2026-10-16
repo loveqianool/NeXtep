@@ -53,7 +53,6 @@ class FreeWindowView(
     private var downRawY = 0f
     private var lastRawX = 0f
     private var lastRawY = 0f
-    private var titleDown = false
     private var titleDragging = false
 
     // Resize-handle state.
@@ -151,7 +150,6 @@ class FreeWindowView(
                 downRawY = event.rawY
                 lastRawX = event.rawX
                 lastRawY = event.rawY
-                titleDown = true
                 titleDragging = false
                 parent?.requestDisallowInterceptTouchEvent(true)
             }
@@ -170,7 +168,6 @@ class FreeWindowView(
                 }
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                titleDown = false
                 if (!titleDragging) {
                     host.onWindowTap(this@FreeWindowView.windowId)
                 }
@@ -383,7 +380,7 @@ class FreeWindowView(
     /**
      * The view fills its window; the window position/size is owned by the
      * manager via WindowManager params. This just tracks the rect for
-     * [currentRect] (drag/carry bookkeeping).
+     * [currentRect] (drag bookkeeping).
      */
     private var windowRect = Rect()
 
@@ -392,16 +389,6 @@ class FreeWindowView(
     }
 
     fun currentRect(): Rect = Rect(windowRect)
-
-    /** The live Surface wrapping the current SurfaceTexture, or null if unavailable. */
-    fun currentSurface(): Surface? {
-        val texture = textureView.surfaceTexture
-        return if (textureView.isAvailable && texture != null) {
-            runCatching { Surface(texture) }.getOrNull()
-        } else {
-            null
-        }
-    }
 
     private fun makeTitleButton(glyph: String): TextView = TextView(context).apply {
         text = glyph

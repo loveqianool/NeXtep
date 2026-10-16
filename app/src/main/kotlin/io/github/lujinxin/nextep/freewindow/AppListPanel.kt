@@ -1,7 +1,7 @@
 package io.github.lujinxin.nextep.freewindow
 
 import android.content.Context
-import android.graphics.Rect
+import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.text.Editable
 import android.text.TextWatcher
@@ -16,9 +16,8 @@ import android.widget.ScrollView
 import android.widget.TextView
 
 /**
- * App list panel expanded from the floating ball.
- * Top section lists parked (background) windows; bottom section lists curated
- * apps filtered by the search box. Host callbacks:
+ * App list panel. Top section lists parked (background) windows; bottom
+ * section lists curated apps filtered by the search box. Host callbacks:
  * [AppListPanelHost.onWindowRowTap] restores a parked window.
  */
 class AppListPanel(context: Context, private val host: AppListPanelHost) : FrameLayout(context) {
@@ -156,13 +155,6 @@ class AppListPanel(context: Context, private val host: AppListPanelHost) : Frame
         }
     }
 
-    /**
-     * No-op kept for API compatibility: the panel now fills its own window,
-     * whose position is owned by the hook via WindowManager params.
-     */
-    fun setPanelRect(rect: Rect) {
-    }
-
     private fun sectionLabel(text: String): TextView = TextView(context).apply {
         this.text = text
         setTextColor(0xFF999999.toInt())
@@ -170,7 +162,7 @@ class AppListPanel(context: Context, private val host: AppListPanelHost) : Frame
         setPadding(0, dp(8), 0, dp(2))
     }
 
-    private fun makeRow(icon: android.graphics.drawable.Drawable?, label: String, badge: String): LinearLayout {
+    private fun makeRow(icon: Drawable?, label: String, badge: String): LinearLayout {
         val row = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -218,9 +210,4 @@ class AppListPanel(context: Context, private val host: AppListPanelHost) : Frame
     private fun dp(value: Int): Int =
         TypedValue.applyDimension(
             TypedValue.COMPLEX_UNIT_DIP, value.toFloat(), resources.displayMetrics).toInt()
-
-    @Suppress("unused")
-    private fun sp(value: Float): Float =
-        TypedValue.applyDimension(
-            TypedValue.COMPLEX_UNIT_SP, value, resources.displayMetrics)
 }

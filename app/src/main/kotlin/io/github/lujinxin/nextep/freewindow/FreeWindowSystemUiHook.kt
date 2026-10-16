@@ -112,7 +112,6 @@ object FreeWindowSystemUiHook {
         fun dp(v: Int) = (v * density).toInt()
 
         var panelRef: AppListPanel? = null
-        var panelRect: Rect? = null
         var notifReceiver: BroadcastReceiver? = null
 
         val manager = FreeWindowManager(appContext, windowManager, windowType)
@@ -206,7 +205,7 @@ object FreeWindowSystemUiHook {
             val ph = (metrics.heightPixels * 0.62).toInt()
             val left = (metrics.widthPixels - pw - dp(12)).coerceAtLeast(0)
             val top = ((metrics.heightPixels - ph) / 2).coerceIn(0, max(0, metrics.heightPixels - ph))
-            return Rect(left, top, left + pw, top + ph).also { panelRect = it }
+            return Rect(left, top, left + pw, top + ph)
         }
 
         fun hidePanel() {
@@ -214,7 +213,6 @@ object FreeWindowSystemUiHook {
                 runCatching { windowManager.removeView(panel) }
                 panel.visibility = View.GONE
             }
-            panelRect = null
         }
 
         fun showPanel() {

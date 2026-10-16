@@ -5,8 +5,8 @@ import android.graphics.Rect
 import android.graphics.drawable.Drawable
 import android.view.Surface
 
-/** Title-bar height in dp. The app content (TextureView / VirtualDisplay)
- * sits strictly below it so the bar never covers app UI. */
+/** Title-bar height in dp. Shown on demand via the two-tap gesture; hidden
+ * by default so the app content fills the whole window. */
 const val TITLE_BAR_DP = 44
 
 /** Window lifecycle mode for a free window. */
@@ -14,7 +14,7 @@ enum class FreeWindowMode {
     /** Normal floating window with a free rect. */
     WINDOWED,
 
-    /** Fullscreen-sized window; other windows and the ball stay above it. */
+    /** Fullscreen-sized window; other free windows stay above it. */
     MAXIMIZED,
 
     /** Hidden from the overlay; the VirtualDisplay and task are kept alive. */
@@ -39,7 +39,7 @@ data class FreeWindowState(
 
 /**
  * Callbacks from [FreeWindowView] into [FreeWindowManager].
- * All coordinates are screen pixels; the overlay container is fullscreen at (0,0).
+ * All coordinates are screen pixels.
  */
 interface FreeWindowViewHost {
     fun onWindowTap(windowId: Int)
