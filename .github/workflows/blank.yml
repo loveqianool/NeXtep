@@ -22,8 +22,9 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      # NOTE: ubuntu-latest already ships a full Android SDK (ANDROID_HOME is
+      # set); AGP auto-installs any missing platform/build-tools itself.
+      # Do NOT add android-actions/setup-android here — it was the failing step.
 
       - name: Build debug APK
         run: ./gradlew :app:assembleDebug --no-daemon
