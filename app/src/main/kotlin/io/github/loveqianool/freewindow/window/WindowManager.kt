@@ -91,6 +91,9 @@ object WindowManager : WindowHost {
             isMaximized = false,
             isMuted = false,
         )
+        // AppOps mute is persistent; a previous session may have left this
+        // package muted. Sync to unmuted so the icon (🔊) matches reality.
+        WindowMute.setMuted(app, componentName.packageName, false)
         Log.i(TAG, "openApp id=$id component=$componentName rect=$rect")
         return id
     }
@@ -99,6 +102,15 @@ object WindowManager : WindowHost {
         val rec = windows.remove(id) ?: return
         synchronized(zOrder) { zOrder.remove(id) }
         synchronized(savedRects) { savedRects.remove(id) }
+        // AppOps mute is persistent; if this was the last muted window for the
+        // package, restore audio so the app isn't silently muted after close.
+        if (rec.isMuted) {
+            val pkg = rec.componentName.packageName
+            val stillMuted = windows.values.any { it.isMuted && it.componentName.packageName == pkg }
+            if (!stillMuted) {
+                appContext?.let { WindowMute.setMuted(it, pkg, false) }
+            }
+        }
         runCatching { wm?.removeView(rec.view) }
         rec.view.releaseSurfaceTexture()
         surfaces.remove(id)?.let { runCatching { it.release() } }
@@ -151,14 +163,7 @@ object WindowManager : WindowHost {
         val rec = windows[id] ?: return
         val app = appContext ?: return
         val pkg = rec.componentName.packageName
-        val uid = runCatching {
-            app.packageManager.getApplicationInfo(pkg, 0).uid
-        }.getOrNull()
-        if (uid == null) {
-            Log.i(TAG, "setMuted id=$id: uid lookup failed for $pkg")
-            return
-        }
-        WindowMute.setMuted(app, pkg, uid, muted)
+        WindowMute.setMuted(app, pkg, muted)
         windows[id] = rec.copy(isMuted = muted)
         rec.view.setMuted(muted)
         Log.i(TAG, "setMuted id=$id muted=$muted")

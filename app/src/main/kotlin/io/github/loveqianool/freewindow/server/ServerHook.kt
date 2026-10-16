@@ -19,36 +19,77 @@ object ServerHook {
         if (installed) return
         installed = true
         installDisplayHook(module, classLoader)
-        installMuteReceiver()
+        hookSystemReady(module, classLoader)
+    }
+
+    /**
+     * Hooks AMS.systemReady() to register the mute receiver.
+     * onSystemServerStarting is too early: ActivityThread.currentApplication()
+     * returns null in system_server, and AMS isn't up yet.
+     */
+    private fun hookSystemReady(module: XposedModule, cl: ClassLoader) {
+        try {
+            val ams = cl.loadClass("com.android.server.am.ActivityManagerService")
+            val m = ams.declaredMethods.firstOrNull { it.name == "systemReady" } ?: run {
+                Log.w(TAG, "systemReady not found")
+                return
+            }
+            m.isAccessible = true
+            module.hook(m).intercept(object : XposedInterface.Hooker {
+                override fun intercept(chain: XposedInterface.Chain): Any? {
+                    val r = chain.proceed()
+                    try {
+                        val ctx = getField(chain.thisObject!!, "mContext") as? android.content.Context
+                        if (ctx != null) {
+                            installMuteReceiver(ctx)
+                        } else {
+                            Log.w(TAG, "systemReady: mContext null")
+                        }
+                    } catch (e: Throwable) {
+                        Log.w(TAG, "installMuteReceiver from systemReady failed", e)
+                    }
+                    return r
+                }
+            })
+            Log.i(TAG, "systemReady hook installed")
+        } catch (e: Throwable) {
+            Log.w(TAG, "hook systemReady failed", e)
+        }
     }
 
     /**
      * Registers the mute broadcast receiver. Runs in system_server (uid 1000),
      * which holds MANAGE_APP_OPS_MODES — systemui does not.
+     *
+     * The receiver requires STATUS_BAR_SERVICE permission (held by systemui),
+     * so third-party apps cannot mute arbitrary packages.
      */
-    private fun installMuteReceiver() {
-        Log.i(TAG, "installMuteReceiver: starting")
+    private fun installMuteReceiver(ctx: android.content.Context) {
         try {
-            val atClass = Class.forName("android.app.ActivityThread")
-            val app = atClass.getDeclaredMethod("currentApplication")
-                .apply { isAccessible = true }
-                .invoke(null) as? android.content.Context
-                ?: run {
-                    Log.w(TAG, "mute receiver: no app context")
-                    return
-                }
             val receiver = object : android.content.BroadcastReceiver() {
                 override fun onReceive(context: android.content.Context, intent: android.content.Intent) {
+                    Log.i(TAG, "mute receiver: got broadcast ${intent.action}")
+                    if (intent.action != WindowMute.ACTION_MUTE) return
                     val pkg = intent.getStringExtra(WindowMute.EXTRA_PACKAGE) ?: return
-                    val uid = intent.getIntExtra(WindowMute.EXTRA_UID, -1)
                     val muted = intent.getBooleanExtra(WindowMute.EXTRA_MUTED, false)
-                    if (uid < 0) return
+                    // Compute uid in system_server; don't trust the broadcast extra
+                    // (multi-user / app clones have different uids).
+                    val uid = try {
+                        val pm = ctx.packageManager
+                        val userId = android.os.Process.myUserHandle().hashCode()
+                        pm.getApplicationInfo(pkg, 0).uid
+                    } catch (e: Throwable) {
+                        Log.w(TAG, "mute: uid lookup failed for $pkg", e)
+                        return
+                    }
                     doSetMuted(pkg, uid, muted)
                 }
             }
-            app.registerReceiver(
+            ctx.registerReceiver(
                 receiver,
                 android.content.IntentFilter(WindowMute.ACTION_MUTE),
+                "android.permission.STATUS_BAR_SERVICE",
+                null,
                 android.content.Context.RECEIVER_EXPORTED,
             )
             Log.i(TAG, "mute receiver registered")
@@ -82,7 +123,7 @@ object ServerHook {
                 .invoke(appOps, op, uid, packageName, mode)
             Log.i(TAG, "mute: set muted=$muted uid=$uid pkg=$packageName")
         } catch (e: Throwable) {
-            Log.i(TAG, "mute failed: ${e.javaClass.simpleName}: ${e.message}")
+            Log.w(TAG, "mute failed", e)
         }
     }
 

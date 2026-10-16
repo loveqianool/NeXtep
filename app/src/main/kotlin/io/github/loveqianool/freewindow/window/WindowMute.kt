@@ -11,26 +11,28 @@ object WindowMute {
     /** Broadcast action for mute requests (handled in system_server). */
     const val ACTION_MUTE = "io.github.loveqianool.freewindow.action.MUTE"
     const val EXTRA_PACKAGE = "package"
-    const val EXTRA_UID = "uid"
     const val EXTRA_MUTED = "muted"
 
     /**
      * Sends a mute request to system_server (which holds MANAGE_APP_OPS_MODES).
-     * The actual AppOps call happens in ServerHook's receiver.
+     * The actual AppOps call happens in ServerHook's receiver, which computes
+     * the uid itself (multi-user / app clones have different uids).
      *
      * NOTE: Requires the system_server to run the new module code. If Vector
      * caches the old dex, the receiver won't exist and mute will silently fail.
      * Workaround: full reboot after APK update (not just `stop; start`).
+     *
+     * Mute is per-package, not per-window: muting one window mutes all
+     * windows of the same app, including the app on the physical display.
      */
-    fun setMuted(context: android.content.Context, packageName: String, uid: Int, muted: Boolean) {
+    fun setMuted(context: android.content.Context, packageName: String, muted: Boolean) {
         try {
             val intent = android.content.Intent(ACTION_MUTE).apply {
                 putExtra(EXTRA_PACKAGE, packageName)
-                putExtra(EXTRA_UID, uid)
                 putExtra(EXTRA_MUTED, muted)
             }
             context.sendBroadcast(intent)
-            Log.i(TAG, "WindowMute: broadcast muted=$muted uid=$uid package=$packageName")
+            Log.i(TAG, "WindowMute: broadcast muted=$muted package=$packageName")
         } catch (e: Throwable) {
             Log.w(TAG, "WindowMute: broadcast failed", e)
         }
