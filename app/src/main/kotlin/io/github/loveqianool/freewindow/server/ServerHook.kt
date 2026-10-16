@@ -75,44 +75,37 @@ object ServerHook {
      * crash/reboot (where closeWindow never ran) are restored to default.
      */
     private fun installMuteReceiver(ctx: android.content.Context) {
-        try {
-            // Restore: clear any persistent mute left by a crash/reboot.
-            val prefs = ctx.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE)
-            prefs.getStringSet(MUTED_PKGS, emptySet())?.forEach { pkg ->
-                try {
-                    val uid = ctx.packageManager.getApplicationInfo(pkg, 0).uid
-                    doSetMuted(pkg, uid, false)
+        val thread = android.os.HandlerThread("FreeWindowMute").apply { start() }
+        val handler = android.os.Handler(thread.looper)
+        val receiver = object : android.content.BroadcastReceiver() {
+            override fun onReceive(context: android.content.Context, intent: android.content.Intent) {
+                Log.d(TAG, "mute receiver: got broadcast ${intent.action}")
+                if (intent.action != WindowMute.ACTION_MUTE) return
+                val pkg = intent.getStringExtra(WindowMute.EXTRA_PACKAGE) ?: return
+                val muted = intent.getBooleanExtra(WindowMute.EXTRA_MUTED, false)
+                // Compute uid in system_server for the current user.
+                // (Multi-user / app clones need getApplicationInfoAsUser;
+                // not yet supported — only the current user is handled.)
+                val uid = try {
+                    ctx.packageManager.getApplicationInfo(pkg, 0).uid
                 } catch (e: Throwable) {
-                    Log.w(TAG, "restore mute failed for $pkg", e)
+                    Log.w(TAG, "mute: uid lookup failed for $pkg", e)
+                    return
                 }
-            }
-            prefs.edit().remove(MUTED_PKGS).apply()
-
-            val thread = android.os.HandlerThread("FreeWindowMute").apply { start() }
-            val handler = android.os.Handler(thread.looper)
-            val receiver = object : android.content.BroadcastReceiver() {
-                override fun onReceive(context: android.content.Context, intent: android.content.Intent) {
-                    Log.d(TAG, "mute receiver: got broadcast ${intent.action}")
-                    if (intent.action != WindowMute.ACTION_MUTE) return
-                    val pkg = intent.getStringExtra(WindowMute.EXTRA_PACKAGE) ?: return
-                    val muted = intent.getBooleanExtra(WindowMute.EXTRA_MUTED, false)
-                    // Compute uid in system_server for the current user.
-                    // (Multi-user / app clones need getApplicationInfoAsUser;
-                    // not yet supported — only the current user is handled.)
-                    val uid = try {
-                        ctx.packageManager.getApplicationInfo(pkg, 0).uid
-                    } catch (e: Throwable) {
-                        Log.w(TAG, "mute: uid lookup failed for $pkg", e)
-                        return
-                    }
-                    // Persist the muted set so a crash/reboot can be cleaned up.
+                // Persist the muted set so a crash/reboot can be cleaned up.
+                // Wrapped: SharedPreferences on system context may fail;
+                // must not break the mute itself.
+                runCatching {
+                    val prefs = ctx.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE)
                     val set = prefs.getStringSet(MUTED_PKGS, emptySet())?.toMutableSet()
                         ?: mutableSetOf()
                     if (muted) set.add(pkg) else set.remove(pkg)
                     prefs.edit().putStringSet(MUTED_PKGS, set).apply()
-                    doSetMuted(pkg, uid, muted)
-                }
+                }.onFailure { Log.w(TAG, "persist muted set failed", it) }
+                doSetMuted(pkg, uid, muted)
             }
+        }
+        try {
             ctx.registerReceiver(
                 receiver,
                 android.content.IntentFilter(WindowMute.ACTION_MUTE),
@@ -123,7 +116,22 @@ object ServerHook {
             Log.i(TAG, "mute receiver registered")
         } catch (e: Throwable) {
             Log.w(TAG, "mute receiver install failed", e)
+            return
         }
+        // Restore: clear any persistent mute left by a crash/reboot.
+        // Separate try so a failure here can't break the registration above.
+        runCatching {
+            val prefs = ctx.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE)
+            prefs.getStringSet(MUTED_PKGS, emptySet())?.forEach { pkg ->
+                try {
+                    val uid = ctx.packageManager.getApplicationInfo(pkg, 0).uid
+                    doSetMuted(pkg, uid, false)
+                } catch (e: Throwable) {
+                    Log.w(TAG, "restore mute failed for $pkg", e)
+                }
+            }
+            prefs.edit().remove(MUTED_PKGS).apply()
+        }.onFailure { Log.w(TAG, "restore muted set failed", it) }
     }
 
     /** Runs in system_server; has MANAGE_APP_OPS_MODES. */
