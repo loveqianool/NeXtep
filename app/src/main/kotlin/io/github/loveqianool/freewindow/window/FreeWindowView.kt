@@ -139,15 +139,22 @@ class FreeWindowView @JvmOverloads constructor(
             },
         )
 
-        // Top-left tap area for title-bar toggle in maximized mode.
-        // In windowed mode the bar is always visible; single tap does nothing
-        // unless armed (two-tap gesture).
+        // Top-left tap area for title-bar toggle.
+        // - Maximized: double-tap toggles (anti-accidental).
+        // - Windowed: two-tap gesture (resize area first, then here).
         val toggleSize = (48 * density).toInt()
+        var lastToggleTap = 0L
         val toggleView = View(context).apply {
             isClickable = true
             setOnClickListener {
                 if (isMaximized) {
-                    toggleTitleBar()
+                    val now = System.currentTimeMillis()
+                    if (now - lastToggleTap < 400) {
+                        lastToggleTap = 0
+                        toggleTitleBar()
+                    } else {
+                        lastToggleTap = now
+                    }
                 } else if (titleToggleArmed) {
                     titleToggleArmed = false
                     toggleTitleBar()
