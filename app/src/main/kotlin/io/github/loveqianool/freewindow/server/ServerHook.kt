@@ -16,6 +16,8 @@ object ServerHook {
     private const val PREFS = "freewindow_mute"
     private const val MUTED_PKGS = "muted_pkgs"
     private var installed = false
+    /** Ensures the mute receiver is registered exactly once, from either trigger. */
+    private val muteReceiverStarted = java.util.concurrent.atomic.AtomicBoolean(false)
 
     fun install(module: XposedModule, classLoader: ClassLoader) {
         if (installed) return
@@ -48,7 +50,7 @@ object ServerHook {
                     try {
                         val ctx = getField(chain.thisObject!!, "mContext") as? android.content.Context
                         if (ctx != null) {
-                            installMuteReceiver(ctx)
+                            installMuteReceiverOnce(ctx)
                         } else {
                             Log.w(TAG, "systemReady: mContext null")
                         }
@@ -62,6 +64,17 @@ object ServerHook {
         } catch (e: Throwable) {
             Log.w(TAG, "hook systemReady failed", e)
         }
+    }
+
+    /**
+     * Registers the mute receiver exactly once. Called from both the
+     * systemReady hook and the display-config hook (whichever fires first).
+     * Runs the actual registration on a background thread — the display hook
+     * runs under the WM lock and must not block.
+     */
+    private fun installMuteReceiverOnce(ctx: android.content.Context) {
+        if (!muteReceiverStarted.compareAndSet(false, true)) return
+        Thread { installMuteReceiver(ctx) }.start()
     }
 
     /**
@@ -201,6 +214,11 @@ object ServerHook {
                         config.hardKeyboardHidden = ref.hardKeyboardHidden
                         config.navigation = ref.navigation
                         config.navigationHidden = ref.navigationHidden
+                        // Fallback trigger: systemReady hook may not fire on all
+                        // ROMs. This hook is proven to run (see log below), and a
+                        // mute request always happens after a window is created.
+                        (getField(wmService, "mContext") as? android.content.Context)
+                            ?.let { installMuteReceiverOnce(it) }
                         Log.i(TAG, "$name matched physical capabilities")
                     } catch (e: Throwable) {
                         Log.w(TAG, "display config hook failed open", e)
