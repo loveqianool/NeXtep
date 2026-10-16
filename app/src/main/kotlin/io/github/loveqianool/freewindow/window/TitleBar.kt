@@ -13,7 +13,7 @@ import kotlin.math.hypot
 
 /**
  * Title bar for a free window: drag to move, plus park / maximize /
- * mute / close buttons. 44dp tall, semi-transparent black.
+ * mute / close buttons. 38dp tall, semi-transparent black.
  */
 class TitleBar @JvmOverloads constructor(
     context: Context,
@@ -116,10 +116,10 @@ class TitleBar @JvmOverloads constructor(
     }
 
     private fun makeButton(text: String): TextView {
-        val size = (44 * resources.displayMetrics.density).toInt()
+        val size = (FreeWindowView.TITLE_BAR_DP * resources.displayMetrics.density).toInt()
         return TextView(context).apply {
             this.text = text
-            textSize = 18f
+            textSize = 16f
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
             layoutParams = LayoutParams(size, size)

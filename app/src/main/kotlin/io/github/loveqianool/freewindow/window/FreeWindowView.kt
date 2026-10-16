@@ -225,6 +225,6 @@ class FreeWindowView @JvmOverloads constructor(
         private const val TAG = "FreeWindow"
 
         /** Title bar height in dp; content height = window height - this. */
-        const val TITLE_BAR_DP = 44
+        const val TITLE_BAR_DP = 38
     }
 }
