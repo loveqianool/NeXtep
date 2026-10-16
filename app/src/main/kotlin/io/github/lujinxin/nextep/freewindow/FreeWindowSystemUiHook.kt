@@ -76,6 +76,7 @@ object FreeWindowSystemUiHook {
             val onCreate = appClass.getDeclaredMethod("onCreate").apply { isAccessible = true }
             module.hook(onCreate).intercept(object : XposedInterface.Hooker {
                 override fun intercept(chain: XposedInterface.Chain): Any? {
+                    NeXtepLog.info("freewindow", "Application.onCreate intercepted, proceeding")
                     val result = chain.proceed()
                     runCatching { onSystemUiReady(chain.thisObject as? Context) }
                         .onFailure { error ->
