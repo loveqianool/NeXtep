@@ -24,6 +24,10 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      # Caches Gradle dependencies + build outputs between runs.
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
       # NOTE: the runner image already ships a full Android SDK (ANDROID_HOME
       # is set); AGP auto-installs any missing platform/build-tools itself.
 
