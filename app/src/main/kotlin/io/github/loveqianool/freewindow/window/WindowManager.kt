@@ -195,18 +195,26 @@ object WindowManager : WindowHost {
     }
 
     override fun onResizeCommit(id: Int, rect: android.graphics.Rect) {
-        val rec = windows[id] ?: return
-        if (rec.isMaximized) return
-        val params = rec.view.layoutParams as? AndroidWindowManager.LayoutParams ?: return
+        Log.i(TAG, "onResizeCommit id=$id rect=$rect")
+        val rec = windows[id] ?: run {
+            Log.i(TAG, "onResizeCommit: no rec for id=$id")
+            return
+        }
+        if (rec.isMaximized) {
+            Log.i(TAG, "onResizeCommit: maximized, skip")
+            return
+        }
+        val params = rec.view.layoutParams as? AndroidWindowManager.LayoutParams ?: run {
+            Log.i(TAG, "onResizeCommit: bad layoutParams")
+            return
+        }
+        Log.i(TAG, "onResizeCommit: old=${params.width}x${params.height} new=${rect.width()}x${rect.height()}")
         params.width = rect.width()
         params.height = rect.height()
-        // Keep the top-left anchored; ResizeHandler already adjusted x/y for
-        // left/top drags.
         params.x = rect.left
         params.y = rect.top
         wm?.updateViewLayout(rec.view, params)
-        // Mark that a resize is pending; the actual VD rebuild happens in
-        // onSurfaceSizeChanged when the TextureView has the new size.
+        Log.i(TAG, "onResizeCommit: updateViewLayout called")
         pendingResize[id] = true
     }
 
