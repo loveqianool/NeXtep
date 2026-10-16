@@ -59,10 +59,17 @@ object WindowMute {
         runCatching {
             val (appOps, setMode) = appOpsSetMode ?: error("AppOpsService unavailable")
             val mode = if (muted) AppOpsManager.MODE_IGNORED else AppOpsManager.MODE_ALLOWED
+            Log.i(TAG, "WindowMute: invoking setMode op=$opPlayAudio uid=$uid pkg=$packageName mode=$mode")
             setMode.invoke(appOps, opPlayAudio, uid, packageName, mode)
             Log.i(TAG, "WindowMute: set muted=$muted uid=$uid package=$packageName")
         }.onFailure { error ->
-            Log.i(TAG, "WindowMute: setMode failed muted=$muted uid=$uid package=$packageName error=${error.message}")
+            Log.i(TAG, "WindowMute: setMode failed muted=$muted uid=$uid package=$packageName " +
+                "error=${error.javaClass.simpleName}: ${error.message}")
+            var cause = error.cause
+            while (cause != null) {
+                Log.i(TAG, "WindowMute: caused by ${cause.javaClass.simpleName}: ${cause.message}")
+                cause = cause.cause
+            }
         }
     }
 }
