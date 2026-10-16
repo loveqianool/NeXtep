@@ -24,9 +24,22 @@ internal object FreeWindowImeRedirectHook {
     fun install(module: XposedModule, classLoader: ClassLoader): Boolean =
         HookGuard.run("freewindow_ime_redirect") {
             check(FeatureGate.VIRTUAL_DISPLAY_SLOTS.defaultEnabled)
-            val immsClass = classLoader.loadClass("com.android.server.inputmethod.InputMethodManagerService")
+            val immsClass = runCatching {
+                classLoader.loadClass("com.android.server.inputmethod.InputMethodManagerService")
+            }.getOrElse { e ->
+                NeXtepLog.warn("freewindow_ime", "IMMS class not found", e)
+                // Try alternative package (some ROMs relocate it).
+                classLoader.loadClass("com.android.server.InputMethodManagerService")
+            }
             // showSoftInput has several overloads across versions; hook them all.
             val methods = immsClass.declaredMethods.filter { it.name == "showSoftInput" }
+            if (methods.isEmpty()) {
+                NeXtepLog.warn(
+                    "freewindow_ime",
+                    "showSoftInput not found; available: " +
+                        immsClass.declaredMethods.map { it.name }.distinct().take(20).joinToString(","),
+                )
+            }
             check(methods.isNotEmpty()) { "showSoftInput not found" }
             methods.forEach { method ->
                 method.isAccessible = true
