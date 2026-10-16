@@ -9,21 +9,21 @@ import io.github.loveqianool.freewindow.window.WindowSystemUiHook
 
 class HookEntry : XposedModule() {
     override fun onSystemServerStarting(param: SystemServerStartingParam) {
+        FwLog.clear() // Fresh log on each boot.
         try {
             val appInfo = param.javaClass.getDeclaredMethod("getApplicationInfo")
                 .apply { isAccessible = true }.invoke(param) as? android.content.pm.ApplicationInfo
-            Log.i(TAG, "system_server starting, module apk=${appInfo?.sourceDir}")
+            FwLog.i("system_server starting, module apk=${appInfo?.sourceDir}")
         } catch (e: Throwable) {
-            Log.i(TAG, "system_server starting (apk path unavailable: ${e.message})")
+            FwLog.i("system_server starting (apk path unavailable: ${e.message})")
         }
-        Log.i(TAG, "system_server starting")
         ServerHook.install(this, param.classLoader)
     }
 
     override fun onPackageLoaded(param: PackageLoadedParam) {
         if (!param.isFirstPackage) return
         if (param.packageName == "com.android.systemui") {
-            Log.i(TAG, "systemui loaded")
+            FwLog.i("systemui loaded")
             WindowSystemUiHook.install()
         }
     }
