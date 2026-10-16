@@ -78,7 +78,10 @@ class FreeWindowView @JvmOverloads constructor(
                 onSurfaceReady?.invoke(Surface(st))
             }
 
-            override fun onSurfaceTextureSizeChanged(st: SurfaceTexture, w: Int, h: Int) = Unit
+            override fun onSurfaceTextureSizeChanged(st: SurfaceTexture, w: Int, h: Int) {
+                Log.i(TAG, "surface size changed window=$windowId ${w}x$h")
+                host.onSurfaceSizeChanged(windowId)
+            }
 
             // Let the framework release the SurfaceTexture; the Surface we
             // handed out is released by WindowManager on rebuild/close.

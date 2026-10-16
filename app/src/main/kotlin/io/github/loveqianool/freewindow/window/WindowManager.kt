@@ -205,10 +205,18 @@ object WindowManager : WindowHost {
         params.x = rect.left
         params.y = rect.top
         wm?.updateViewLayout(rec.view, params)
-        // Rebuild the VirtualDisplay at the new size; the task is moved over.
+        // Mark that a resize is pending; the actual VD rebuild happens in
+        // onSurfaceSizeChanged when the TextureView has the new size.
+        pendingResize[id] = true
+    }
+
+    override fun onSurfaceSizeChanged(id: Int) {
+        if (pendingResize.remove(id) != true) return
         val surface = surfaces[id] ?: return
         rebuildDisplay(id, surface)
     }
+
+    private val pendingResize = mutableMapOf<Int, Boolean>()
 
     override fun currentRect(id: Int): android.graphics.Rect {
         val rec = windows[id] ?: return android.graphics.Rect()

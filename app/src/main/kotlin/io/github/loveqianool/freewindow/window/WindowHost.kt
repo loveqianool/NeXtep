@@ -30,4 +30,7 @@ interface WindowHost {
 
     /** Current window rect, for the resize handler. */
     fun currentRect(id: Int): android.graphics.Rect
+
+    /** TextureView surface changed size (after resize); rebuild VD if needed. */
+    fun onSurfaceSizeChanged(id: Int)
 }
