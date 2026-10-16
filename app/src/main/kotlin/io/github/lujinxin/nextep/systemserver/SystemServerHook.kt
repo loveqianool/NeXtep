@@ -22,6 +22,7 @@ object SystemServerHook {
 
     fun install(module: XposedModule, classLoader: ClassLoader) {
         if (!installed.compareAndSet(false, true)) return
+        NeXtepLog.info("systemserver", "SystemServerHook.install() entered")
         val slotVideoExitInstalled = HookGuard.run("slot_video_exit") {
             check(FeatureGate.VIRTUAL_DISPLAY_SLOTS.defaultEnabled)
             val activityClass = classLoader.loadClass("com.android.server.wm.ActivityRecord")
