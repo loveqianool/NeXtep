@@ -7,10 +7,12 @@ object VirtualDisplayFlagsCompat {
     data class Resolved(val value: Int, val names: List<String>)
 
     fun resolveCandidates(): List<Resolved> {
-        val fallbackValue = DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY or
-            DisplayManager.VIRTUAL_DISPLAY_FLAG_PRESENTATION
+        // NB: Do NOT set VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY. It blocks
+        // system windows (notably the IME) from appearing on the display.
+        // The free window needs the IME to show inside its VirtualDisplay.
+        val fallbackValue = DisplayManager.VIRTUAL_DISPLAY_FLAG_PRESENTATION
         var value = fallbackValue
-        val names = mutableListOf("OWN_CONTENT_ONLY", "PRESENTATION")
+        val names = mutableListOf("PRESENTATION")
 
         listOf(
             "VIRTUAL_DISPLAY_FLAG_TRUSTED" to "TRUSTED",
@@ -36,7 +38,7 @@ object VirtualDisplayFlagsCompat {
         val preferred = Resolved(value, names.toList())
         val fallback = Resolved(
             fallbackValue,
-            listOf("OWN_CONTENT_ONLY", "PRESENTATION"),
+            listOf("PRESENTATION"),
         )
         return listOf(preferred, ownFocus, fallback).distinctBy { it.value }.also { candidates ->
             NeXtepLog.info(

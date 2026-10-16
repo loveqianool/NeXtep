@@ -549,10 +549,13 @@ class FreeWindowManager(
             rect.width(),
             rect.height(),
             windowType,
-            // Focusable (no NOT_FOCUSABLE) so the IME can show when the app
-            // focuses a text field; NOT_TOUCH_MODAL keeps outside touches
-            // falling through to the system underneath.
-            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+            // NOT_FOCUSABLE: the overlay must never steal input focus from
+            // the system underneath (otherwise the IME breaks for underlying
+            // apps). NOT_TOUCH_MODAL keeps outside touches falling through.
+            // The IME for apps inside the window is handled on the
+            // VirtualDisplay itself (no OWN_CONTENT_ONLY flag).
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
             PixelFormat.TRANSLUCENT,
         ).apply {
             gravity = Gravity.TOP or Gravity.START
