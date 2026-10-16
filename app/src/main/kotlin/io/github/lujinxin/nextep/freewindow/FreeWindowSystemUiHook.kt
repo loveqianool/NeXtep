@@ -67,7 +67,12 @@ object FreeWindowSystemUiHook {
 
     fun install(module: XposedModule, classLoader: ClassLoader) {
         runCatching {
-            val appClass = classLoader.loadClass("com.android.systemui.SystemUIApplication")
+            // Hook the framework Application.onCreate rather than the concrete
+            // SystemUIApplication: the latter is not reliably loadable at this
+            // point on all ROMs (ClassNotFoundException on LineageOS 24), while
+            // android.app.Application is always present. This hook is installed
+            // only in the systemui process, so it still fires exactly once.
+            val appClass = Class.forName("android.app.Application")
             val onCreate = appClass.getDeclaredMethod("onCreate").apply { isAccessible = true }
             module.hook(onCreate).intercept(object : XposedInterface.Hooker {
                 override fun intercept(chain: XposedInterface.Chain): Any? {
