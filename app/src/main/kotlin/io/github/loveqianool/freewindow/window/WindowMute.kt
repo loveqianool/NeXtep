@@ -34,4 +34,3 @@ object WindowMute {
     const val EXTRA_UID = "uid"
     const val EXTRA_MUTED = "muted"
 }
-}
