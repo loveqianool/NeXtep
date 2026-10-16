@@ -275,10 +275,17 @@ object WindowManager : WindowHost {
     private fun rebuildDisplay(id: Int, surface: Surface) {
         val rec = windows[id] ?: return
         val app = appContext ?: return
+        // Keep the old display alive while moving the task; releasing it first
+        // kills the task (Unknown rootTaskId).
+        val oldVd = displays[id]
+        val oldTaskId = rec.taskId
         surfaces[id]?.let { runCatching { it.release() } }
         surfaces[id] = surface
         val rect = currentRect(rec.view)
-        val vd = displayEngine?.create(id, rect.width(), rect.height(), densityDpi(app), surface)
+        val vd = displayEngine?.create(
+            id, rect.width(), rect.height(), densityDpi(app), surface,
+            releaseFirst = false,
+        )
         if (vd == null) {
             Log.i(TAG, "rebuildDisplay id=$id failed")
             closeWindow(id)
@@ -287,11 +294,21 @@ object WindowManager : WindowHost {
         val newDisplayId = vd.display.displayId
         displays[id] = vd
         rec.view.displayId = newDisplayId
-        val oldTaskId = rec.taskId
         windows[id] = rec.copy(displayId = newDisplayId)
-        if (oldTaskId >= 0 && moveTaskToDisplay(oldTaskId, newDisplayId)) {
-            Log.i(TAG, "rebuildDisplay id=$id moved task=$oldTaskId to display=$newDisplayId")
-        } else {
+        var moved = false
+        if (oldTaskId >= 0) {
+            moved = moveTaskToDisplay(oldTaskId, newDisplayId)
+            if (moved) {
+                Log.i(TAG, "rebuildDisplay id=$id moved task=$oldTaskId to display=$newDisplayId")
+            }
+        }
+        // Now safe to release the old display; the task is gone from it.
+        oldVd?.let { runCatching { it.release() } }
+        // Also release via engine to clear its map (it still holds the old).
+        // Actually engine.create with releaseFirst=false left the old in its
+        // map; overwrite is already done by displays[id]=vd above, but the
+        // engine's internal map needs the old released.
+        if (!moved) {
             Log.i(TAG, "rebuildDisplay id=$id: move failed, relaunching")
             launchOnDisplay(app, rec.componentName, newDisplayId)
             handler.postDelayed({ resolveTaskId(id) }, 500)

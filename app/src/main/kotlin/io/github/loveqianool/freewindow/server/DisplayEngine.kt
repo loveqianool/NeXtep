@@ -14,7 +14,23 @@ class DisplayEngine(private val context: Context) {
     private val displays = mutableMapOf<Int, VirtualDisplay>()
 
     fun create(id: Int, width: Int, height: Int, dpi: Int, surface: Surface): VirtualDisplay? {
-        release(id)
+        return create(id, width, height, dpi, surface, releaseFirst = true)
+    }
+
+    /**
+     * Create a VirtualDisplay. If [releaseFirst] is false, the existing display
+     * for [id] is kept alive — used by rebuild where the task must be moved
+     * before the old display is released.
+     */
+    fun create(
+        id: Int,
+        width: Int,
+        height: Int,
+        dpi: Int,
+        surface: Surface,
+        releaseFirst: Boolean,
+    ): VirtualDisplay? {
+        if (releaseFirst) release(id)
         val dm = context.getSystemService(DisplayManager::class.java)
         if (dm == null) {
             Log.w(TAG, "DisplayManager unavailable")
