@@ -4,6 +4,7 @@ import android.content.res.Configuration
 import android.util.Log
 import io.github.libxposed.api.XposedInterface
 import io.github.libxposed.api.XposedModule
+import io.github.loveqianool.freewindow.window.WindowMute
 
 /**
  * system_server hooks. Currently only the display-capability matching:
@@ -17,7 +18,74 @@ object ServerHook {
     fun install(module: XposedModule, classLoader: ClassLoader) {
         if (installed) return
         installed = true
+        installDisplayHook(module, classLoader)
+        installMuteReceiver()
+    }
+
+    /**
+     * Registers the mute broadcast receiver. Runs in system_server (uid 1000),
+     * which holds MANAGE_APP_OPS_MODES — systemui does not.
+     */
+    private fun installMuteReceiver() {
         try {
+            val atClass = Class.forName("android.app.ActivityThread")
+            val app = atClass.getDeclaredMethod("currentApplication")
+                .apply { isAccessible = true }
+                .invoke(null) as? android.content.Context
+                ?: run {
+                    Log.w(TAG, "mute receiver: no app context")
+                    return
+                }
+            val receiver = object : android.content.BroadcastReceiver() {
+                override fun onReceive(context: android.content.Context, intent: android.content.Intent) {
+                    val pkg = intent.getStringExtra(WindowMute.EXTRA_PACKAGE) ?: return
+                    val uid = intent.getIntExtra(WindowMute.EXTRA_UID, -1)
+                    val muted = intent.getBooleanExtra(WindowMute.EXTRA_MUTED, false)
+                    if (uid < 0) return
+                    doSetMuted(pkg, uid, muted)
+                }
+            }
+            app.registerReceiver(
+                receiver,
+                android.content.IntentFilter(WindowMute.ACTION_MUTE),
+                android.content.Context.RECEIVER_NOT_EXPORTED,
+            )
+            Log.i(TAG, "mute receiver registered")
+        } catch (e: Throwable) {
+            Log.w(TAG, "mute receiver install failed", e)
+        }
+    }
+
+    /** Runs in system_server; has MANAGE_APP_OPS_MODES. */
+    private fun doSetMuted(packageName: String, uid: Int, muted: Boolean) {
+        try {
+            val op = try {
+                android.app.AppOpsManager::class.java
+                    .getDeclaredField("OP_PLAY_AUDIO")
+                    .apply { isAccessible = true }.getInt(null)
+            } catch (e: Throwable) { 28 }
+            val sm = Class.forName("android.os.ServiceManager")
+            val binder = sm.getMethod("getService", String::class.java)
+                .invoke(null, android.content.Context.APP_OPS_SERVICE) as? android.os.IBinder
+                ?: return
+            val stub = Class.forName("com.android.internal.app.IAppOpsService\$Stub")
+            val appOps = stub.getMethod("asInterface", android.os.IBinder::class.java)
+                .invoke(null, binder) ?: return
+            val mode = if (muted) android.app.AppOpsManager.MODE_IGNORED
+                       else android.app.AppOpsManager.MODE_ALLOWED
+            appOps.javaClass.getMethod(
+                "setMode",
+                Int::class.javaPrimitiveType, Int::class.javaPrimitiveType,
+                String::class.java, Int::class.javaPrimitiveType,
+            ).apply { isAccessible = true }
+                .invoke(appOps, op, uid, packageName, mode)
+            Log.i(TAG, "mute: set muted=$muted uid=$uid pkg=$packageName")
+        } catch (e: Throwable) {
+            Log.i(TAG, "mute failed: ${e.javaClass.simpleName}: ${e.message}")
+        }
+    }
+
+    private fun installDisplayHook(module: XposedModule, classLoader: ClassLoader) {
             val displayClass = classLoader.loadClass("com.android.server.wm.DisplayContent")
             val method = displayClass.declaredMethods.firstOrNull {
                 it.name == "computeScreenConfiguration" &&

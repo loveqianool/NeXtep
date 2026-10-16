@@ -114,9 +114,21 @@ class FreeWindowView @JvmOverloads constructor(
             if (event.actionMasked == MotionEvent.ACTION_DOWN) {
                 ImeHelper.setFocusable(this@FreeWindowView, true)
                 host.onTap(windowId)
-            }
-            if (displayId >= 0) {
-                TouchForwarder.forward(event, displayId)
+                // Delay DOWN by one frame: updateViewLayout (focusable) is async;
+                // the app requests the IME on DOWN, which needs the window to
+                // already be focusable. Copy the event (pooled).
+                if (displayId >= 0) {
+                    val copy = MotionEvent.obtain(event)
+                    val did = displayId
+                    post {
+                        TouchForwarder.forward(copy, did)
+                        copy.recycle()
+                    }
+                }
+            } else {
+                if (displayId >= 0) {
+                    TouchForwarder.forward(event, displayId)
+                }
             }
             true
         }

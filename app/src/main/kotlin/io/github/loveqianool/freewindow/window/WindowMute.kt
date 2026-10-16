@@ -16,60 +16,27 @@ import android.util.Log
 object WindowMute {
     private const val TAG = "FreeWindow"
 
-    /** OP_PLAY_AUDIO value; resolved via reflection, 28 as fallback. */
-    private val opPlayAudio: Int by lazy {
-        runCatching {
-            AppOpsManager::class.java
-                .getDeclaredField("OP_PLAY_AUDIO")
-                .apply { isAccessible = true }
-                .getInt(null)
-        }.getOrElse {
-            Log.i(TAG, "WindowMute: OP_PLAY_AUDIO reflection failed, using 28")
-            28
-        }
-    }
+    /** Broadcast action for mute requests (handled in system_server). */
+    const val ACTION_MUTE = "io.github.loveqianool.freewindow.action.MUTE"
+    const val EXTRA_PACKAGE = "package"
+    const val EXTRA_UID = "uid"
+    const val EXTRA_MUTED = "muted"
 
-    /** Cached AppOps proxy + setMode; reflection is expensive per toggle. */
-    private val appOpsSetMode: Pair<Any, java.lang.reflect.Method>? by lazy {
-        try {
-            val serviceManager = Class.forName("android.os.ServiceManager")
-            val binder = serviceManager
-                .getMethod("getService", String::class.java)
-                .invoke(null, Context.APP_OPS_SERVICE) as? IBinder
-                ?: return@lazy null
-            val stub = Class.forName("com.android.internal.app.IAppOpsService\$Stub")
-            val appOps = stub
-                .getMethod("asInterface", IBinder::class.java)
-                .invoke(null, binder) ?: return@lazy null
-            val method = appOps.javaClass.getMethod(
-                "setMode",
-                Int::class.javaPrimitiveType,
-                Int::class.javaPrimitiveType,
-                String::class.java,
-                Int::class.javaPrimitiveType,
-            ).apply { isAccessible = true }
-            appOps to method
-        } catch (e: Throwable) {
-            Log.i(TAG, "WindowMute: AppOps lookup failed: ${e.message}")
-            null
-        }
-    }
-
+    /**
+     * Sends a mute request to system_server (which holds MANAGE_APP_OPS_MODES).
+     * The actual AppOps call happens in [ServerMuteReceiver].
+     */
     fun setMuted(context: Context, packageName: String, uid: Int, muted: Boolean) {
-        runCatching {
-            val (appOps, setMode) = appOpsSetMode ?: error("AppOpsService unavailable")
-            val mode = if (muted) AppOpsManager.MODE_IGNORED else AppOpsManager.MODE_ALLOWED
-            Log.i(TAG, "WindowMute: invoking setMode op=$opPlayAudio uid=$uid pkg=$packageName mode=$mode")
-            setMode.invoke(appOps, opPlayAudio, uid, packageName, mode)
-            Log.i(TAG, "WindowMute: set muted=$muted uid=$uid package=$packageName")
-        }.onFailure { error ->
-            Log.i(TAG, "WindowMute: setMode failed muted=$muted uid=$uid package=$packageName " +
-                "error=${error.javaClass.simpleName}: ${error.message}")
-            var cause = error.cause
-            while (cause != null) {
-                Log.i(TAG, "WindowMute: caused by ${cause.javaClass.simpleName}: ${cause.message}")
-                cause = cause.cause
+        try {
+            val intent = android.content.Intent(ACTION_MUTE).apply {
+                putExtra(EXTRA_PACKAGE, packageName)
+                putExtra(EXTRA_UID, uid)
+                putExtra(EXTRA_MUTED, muted)
             }
+            context.sendBroadcast(intent)
+            Log.i(TAG, "WindowMute: broadcast muted=$muted uid=$uid package=$packageName")
+        } catch (e: Throwable) {
+            Log.i(TAG, "WindowMute: broadcast failed: ${e.message}")
         }
     }
 }
