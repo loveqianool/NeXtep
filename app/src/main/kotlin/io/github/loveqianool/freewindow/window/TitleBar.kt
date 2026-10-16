@@ -52,30 +52,52 @@ class TitleBar @JvmOverloads constructor(
         muteBtn.setOnClickListener { host.onToggleMute(windowId) }
         closeBtn.setOnClickListener { host.onClose(windowId) }
 
-        // Drag the bar (anywhere not on a button) to move the window.
-        setOnTouchListener { _, event ->
-            when (event.actionMasked) {
-                MotionEvent.ACTION_DOWN -> {
-                    lastRawX = event.rawX
-                    lastRawY = event.rawY
-                    dragging = false
-                    true
+        // Entire bar is draggable, including on buttons: intercept the touch
+        // stream once it becomes a drag. Taps still reach the buttons.
+    }
+
+    override fun onInterceptTouchEvent(ev: MotionEvent): Boolean {
+        when (ev.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                lastRawX = ev.rawX
+                lastRawY = ev.rawY
+                dragging = false
+            }
+            MotionEvent.ACTION_MOVE -> {
+                val dx = ev.rawX - lastRawX
+                val dy = ev.rawY - lastRawY
+                if (!dragging && hypot(dx, dy) > touchSlop) {
+                    dragging = true
+                    // Intercept: buttons won't get the rest of the gesture.
+                    return true
                 }
-                MotionEvent.ACTION_MOVE -> {
-                    val dx = event.rawX - lastRawX
-                    val dy = event.rawY - lastRawY
-                    if (!dragging && hypot(dx, dy) > touchSlop) dragging = true
-                    if (dragging) {
-                        host.onMove(windowId, dx.toInt(), dy.toInt())
-                        lastRawX = event.rawX
-                        lastRawY = event.rawY
-                    }
-                    true
-                }
-                else -> false
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                dragging = false
             }
         }
-        Log.i(TAG, "TitleBar created window=$windowId")
+        return super.onInterceptTouchEvent(ev)
+    }
+
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        // We only get here after intercepting a drag.
+        when (event.actionMasked) {
+            MotionEvent.ACTION_MOVE -> {
+                if (dragging) {
+                    val dx = event.rawX - lastRawX
+                    val dy = event.rawY - lastRawY
+                    host.onMove(windowId, dx.toInt(), dy.toInt())
+                    lastRawX = event.rawX
+                    lastRawY = event.rawY
+                }
+                return true
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                dragging = false
+                return true
+            }
+        }
+        return super.onTouchEvent(event)
     }
 
     fun setMuted(muted: Boolean) {

@@ -10,16 +10,18 @@ import android.view.Surface
 import android.view.TextureView
 import android.view.View
 import android.widget.FrameLayout
+import android.widget.LinearLayout
 import io.github.loveqianool.freewindow.input.ImeHelper
 import io.github.loveqianool.freewindow.input.ResizeHandler
 import io.github.loveqianool.freewindow.input.TouchForwarder
 
 /**
- * A free window: a [TextureView] showing the VirtualDisplay content with a
- * [TitleBar] overlaid on top.
+ * A free window: vertical stack of [TitleBar] (outside, on top) + [TextureView]
+ * showing the VirtualDisplay content.
  *
- * - The TextureView fills the whole window; the title bar is shown by
- *   default in windowed mode (hidden when maximized, see [setMaximized]).
+ * - Windowed mode: title bar is visible above the content (44dp). The VD
+ *   matches the content size (window minus title bar).
+ * - Maximized: title bar is GONE, content takes the full window.
  * - Touches on the content are forwarded to the VirtualDisplay via
  *   [TouchForwarder]; ACTION_DOWN also notifies [host] (focus + bring to
  *   front).
@@ -50,6 +52,11 @@ class FreeWindowView @JvmOverloads constructor(
 
     private var resizeHandleView: View? = null
 
+    companion object {
+        /** Title bar height in dp; content height = window height - this. */
+        const val TITLE_BAR_DP = 44
+    }
+
     private val resizeHandler = ResizeHandler(
         context,
         context.getSystemService(Context.WINDOW_SERVICE) as android.view.WindowManager,
@@ -59,18 +66,35 @@ class FreeWindowView @JvmOverloads constructor(
             override fun onResizeCommit(rect: android.graphics.Rect) =
                 host.onResizeCommit(windowId, rect)
             override fun onResizeAreaTap() {
-                // First tap of the title-bar toggle gesture.
                 titleToggleArmed = true
-                // Disarm after 2s if no second tap.
                 postDelayed({ titleToggleArmed = false }, 2000)
             }
         },
     )
 
     init {
-        textureView.layoutParams = LayoutParams(
-            LayoutParams.MATCH_PARENT,
-            LayoutParams.MATCH_PARENT,
+        val density = resources.displayMetrics.density
+        val barHeight = (TITLE_BAR_DP * density).toInt()
+
+        // Vertical stack: title bar on top (outside content), TextureView below.
+        val contentLayout = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LayoutParams(
+                LayoutParams.MATCH_PARENT,
+                LayoutParams.MATCH_PARENT,
+            )
+        }
+
+        titleBar.layoutParams = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            barHeight,
+        )
+        contentLayout.addView(titleBar)
+
+        textureView.layoutParams = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            0,
+            1f, // Takes remaining space
         )
         textureView.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
             override fun onSurfaceTextureAvailable(st: SurfaceTexture, w: Int, h: Int) {
@@ -81,8 +105,6 @@ class FreeWindowView @JvmOverloads constructor(
 
             override fun onSurfaceTextureSizeChanged(st: SurfaceTexture, w: Int, h: Int) {
                 Log.i(TAG, "surface size changed window=$windowId ${w}x$h")
-                // Update the buffer size to match; otherwise the VD renders at
-                // the wrong scale.
                 st.setDefaultBufferSize(w, h)
             }
 
@@ -103,20 +125,13 @@ class FreeWindowView @JvmOverloads constructor(
             }
             true
         }
-        addView(textureView)
+        contentLayout.addView(textureView)
+        addView(contentLayout)
 
-        val barHeight = (44 * resources.displayMetrics.density).toInt()
-        addView(
-            titleBar,
-            LayoutParams(LayoutParams.MATCH_PARENT, barHeight).apply {
-                gravity = Gravity.TOP
-            },
-        )
-
-        // Resize handle at bottom-right.
+        // Resize handle at bottom-right (of the whole window).
         val handleView = resizeHandler.createHandleView()
         resizeHandleView = handleView
-        val handleSize = (ResizeHandler.HANDLE_DP * resources.displayMetrics.density).toInt()
+        val handleSize = (ResizeHandler.HANDLE_DP * density).toInt()
         addView(
             handleView,
             LayoutParams(handleSize, handleSize).apply {
@@ -124,11 +139,10 @@ class FreeWindowView @JvmOverloads constructor(
             },
         )
 
-        // Top-left tap area for title-bar toggle (second tap of the gesture).
-        // Top-left tap area for title-bar toggle.
-        // - Maximized: single tap toggles (no resize handle to arm with).
-        // - Windowed: requires the two-tap gesture (resize area first).
-        val toggleSize = (48 * resources.displayMetrics.density).toInt()
+        // Top-left tap area for title-bar toggle in maximized mode.
+        // In windowed mode the bar is always visible; single tap does nothing
+        // unless armed (two-tap gesture).
+        val toggleSize = (48 * density).toInt()
         val toggleView = View(context).apply {
             isClickable = true
             setOnClickListener {
@@ -163,19 +177,24 @@ class FreeWindowView @JvmOverloads constructor(
     fun toggleTitleBar() {
         val isVisible = titleBar.visibility == View.VISIBLE
         titleBar.visibility = if (isVisible) View.GONE else View.VISIBLE
+        // When bar visibility changes, the content size changes; notify host
+        // so the VD can be resized.
+        host.onContentSizeChanged(windowId)
         Log.i(TAG, "title bar toggled window=$windowId visible=${!isVisible}")
     }
 
     fun setMuted(muted: Boolean) = titleBar.setMuted(muted)
 
+    fun isTitleBarVisible(): Boolean = titleBar.visibility == View.VISIBLE
+
     fun setMaximized(maximized: Boolean) {
         isMaximized = maximized
         titleBar.setMaximized(maximized)
         titleBar.visibility = if (maximized) View.GONE else View.VISIBLE
-        // No resize handle in maximized mode.
         resizeHandleView?.visibility = if (maximized) View.GONE else View.VISIBLE
-        // Disarm any pending title toggle.
         titleToggleArmed = false
+        // Content size changed (bar gone/shown); host resizes the VD.
+        host.onContentSizeChanged(windowId)
     }
 
     /**
@@ -185,6 +204,19 @@ class FreeWindowView @JvmOverloads constructor(
      */
     fun releaseSurfaceTexture() {
         runCatching { textureView.surfaceTexture?.release() }
+    }
+
+    /**
+     * Content size (VD size): window size minus title bar (if visible).
+     * Called by host to size the VirtualDisplay.
+     */
+    fun contentSize(): android.graphics.Rect {
+        val barH = if (titleBar.visibility == View.VISIBLE) {
+            (TITLE_BAR_DP * resources.displayMetrics.density).toInt()
+        } else {
+            0
+        }
+        return android.graphics.Rect(0, 0, width, (height - barH).coerceAtLeast(1))
     }
 
     companion object {

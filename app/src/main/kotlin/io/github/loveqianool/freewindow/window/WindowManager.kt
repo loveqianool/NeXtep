@@ -227,9 +227,10 @@ object WindowManager : WindowHost {
         if (vd != null) {
             val app = appContext
             val dpi = if (app != null) densityDpi(app) else 440
+            val (vdW, vdH) = vdSizeForWindow(rect, rec.view)
             runCatching {
-                vd.resize(rect.width(), rect.height(), dpi)
-                Log.i(TAG, "onResizeCommit: vd resized to ${rect.width()}x${rect.height()}")
+                vd.resize(vdW, vdH, dpi)
+                Log.i(TAG, "onResizeCommit: vd resized to ${vdW}x${vdH}")
             }.onFailure {
                 Log.i(TAG, "onResizeCommit: vd.resize failed: ${it.message}")
             }
@@ -244,6 +245,22 @@ object WindowManager : WindowHost {
             ?: return android.graphics.Rect()
         return android.graphics.Rect(params.x, params.y,
             params.x + params.width, params.y + params.height)
+    }
+
+    override fun onContentSizeChanged(id: Int) {
+        val rec = windows[id] ?: return
+        val app = appContext ?: return
+        // Post to let the layout settle; contentSize() reads measured dims.
+        handler.post {
+            val content = rec.view.contentSize()
+            val vd = displays[id] ?: return@post
+            runCatching {
+                vd.resize(content.width(), content.height(), densityDpi(app))
+                Log.i(TAG, "onContentSizeChanged id=$id vd=${content.width()}x${content.height()}")
+            }.onFailure {
+                Log.i(TAG, "onContentSizeChanged resize failed id=$id: ${it.message}")
+            }
+        }
     }
 
     // ------------------------------------------------------------ internals
@@ -262,7 +279,9 @@ object WindowManager : WindowHost {
         val app = appContext ?: return
         surfaces[id] = surface
         val rect = currentRect(rec.view)
-        val vd = displayEngine?.create(id, rect.width(), rect.height(), densityDpi(app), surface)
+        // VD matches the content area (window minus title bar).
+        val (vdW, vdH) = vdSizeForWindow(rect, rec.view)
+        val vd = displayEngine?.create(id, vdW, vdH, densityDpi(app), surface)
         if (vd == null) {
             Log.i(TAG, "openApp id=$id: display creation failed")
             surfaces.remove(id)
@@ -297,9 +316,10 @@ object WindowManager : WindowHost {
         surfaces[id]?.let { runCatching { it.release() } }
         surfaces[id] = surface
         val rect = currentRect(rec.view)
-        val sizeChanged = oldW > 0 && oldW != rect.width()
+        val (vdW, vdH) = vdSizeForWindow(rect, rec.view)
+        val sizeChanged = oldW > 0 && oldW != vdW
         val vd = displayEngine?.create(
-            id, rect.width(), rect.height(), densityDpi(app), surface,
+            id, vdW, vdH, densityDpi(app), surface,
             releaseFirst = false,
         )
         if (vd == null) {
@@ -371,7 +391,8 @@ object WindowManager : WindowHost {
         params.height = rect.height()
         wm?.updateViewLayout(rec.view, params)
         displays[id]?.let { vd ->
-            runCatching { vd.resize(rect.width(), rect.height(), densityDpi(app)) }
+            val (vdW, vdH) = vdSizeForWindow(rect, rec.view)
+            runCatching { vd.resize(vdW, vdH, densityDpi(app)) }
                 .onFailure { Log.i(TAG, "resize failed id=$id: ${it.message}") }
         }
     }
@@ -529,6 +550,19 @@ object WindowManager : WindowHost {
         val params = view.layoutParams as? AndroidWindowManager.LayoutParams
             ?: return defaultRect(view.context)
         return Rect(params.x, params.y, params.x + params.width, params.y + params.height)
+    }
+
+    /**
+     * VD size for a window rect: full width, height minus title bar (if visible).
+     * The title bar sits outside the content.
+     */
+    private fun vdSizeForWindow(windowRect: Rect, view: FreeWindowView): Pair<Int, Int> {
+        val barH = if (view.isTitleBarVisible()) {
+            (FreeWindowView.TITLE_BAR_DP * view.resources.displayMetrics.density).toInt()
+        } else {
+            0
+        }
+        return windowRect.width() to (windowRect.height() - barH).coerceAtLeast(1)
     }
 
     private fun densityDpi(app: Context): Int = app.resources.displayMetrics.densityDpi
