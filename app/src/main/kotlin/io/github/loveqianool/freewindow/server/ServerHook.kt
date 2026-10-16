@@ -27,6 +27,7 @@ object ServerHook {
      * which holds MANAGE_APP_OPS_MODES — systemui does not.
      */
     private fun installMuteReceiver() {
+        Log.i(TAG, "installMuteReceiver: starting")
         try {
             val atClass = Class.forName("android.app.ActivityThread")
             val app = atClass.getDeclaredMethod("currentApplication")
