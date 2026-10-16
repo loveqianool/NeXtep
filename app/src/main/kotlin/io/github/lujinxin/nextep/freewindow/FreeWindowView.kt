@@ -46,6 +46,7 @@ class FreeWindowView(
     private val closeBtn = makeTitleButton("✕")
     private val titleBar = LinearLayout(context)
     private val textureView = TextureView(context)
+    private lateinit var topLeftTapArea: View
 
     // Title-bar drag state.
     private var downRawX = 0f
@@ -59,6 +60,73 @@ class FreeWindowView(
     private var resizeStartRawX = 0f
     private var resizeStartRawY = 0f
     private var resizeStartRect: Rect? = null
+    private var resizeDownX = 0f
+    private var resizeDownY = 0f
+    private var resizeMoved = false
+
+    // Title-bar visibility: hidden by default. Two-tap gesture
+    // (bottom-right resize area, then top-left corner) shows it;
+    // auto-hides after a few seconds of no interaction.
+    private var titleBarVisible = false
+    private var armed = false
+    private val hideTitleRunnable = Runnable { hideTitleBar() }
+    private val disarmRunnable = Runnable { setArmed(false) }
+
+    fun isTitleBarVisible(): Boolean = titleBarVisible
+
+    /** Bottom-right tap: arm the gesture (or hide an already-visible bar). */
+    fun armTitleBarGesture() {
+        if (titleBarVisible) {
+            hideTitleBar()
+            return
+        }
+        setArmed(true)
+    }
+
+    /** Top-left tap: show the bar when armed; hide when visible. */
+    fun onTopLeftTap() {
+        if (titleBarVisible) {
+            hideTitleBar()
+        } else if (armed) {
+            showTitleBar()
+        }
+    }
+
+    private fun setArmed(value: Boolean) {
+        armed = value
+        topLeftTapArea.visibility = if (value) View.VISIBLE else View.GONE
+        removeCallbacks(disarmRunnable)
+        if (value) postDelayed(disarmRunnable, 3000)
+    }
+
+    private fun showTitleBar() {
+        if (titleBarVisible) return
+        titleBarVisible = true
+        setArmed(false)
+        titleBar.visibility = View.VISIBLE
+        pokeAutoHide()
+        notifyContentSize()
+    }
+
+    private fun hideTitleBar() {
+        if (!titleBarVisible) return
+        titleBarVisible = false
+        removeCallbacks(hideTitleRunnable)
+        titleBar.visibility = View.GONE
+        notifyContentSize()
+    }
+
+    /** Reset the auto-hide timer; call on any title-bar interaction. */
+    private fun pokeAutoHide() {
+        removeCallbacks(hideTitleRunnable)
+        if (titleBarVisible) postDelayed(hideTitleRunnable, 5000)
+    }
+
+    private fun notifyContentSize() {
+        val rect = currentRect()
+        val h = rect.height() - (if (titleBarVisible) dp(TITLE_BAR_DP) else 0)
+        host.onContentSizeChanged(windowId, rect.width().coerceAtLeast(1), h.coerceAtLeast(1))
+    }
 
     private val surfaceListener = object : TextureView.SurfaceTextureListener {
         override fun onSurfaceTextureAvailable(surface: SurfaceTexture, width: Int, height: Int) {
@@ -76,6 +144,7 @@ class FreeWindowView(
     }
 
     private val titleTouchListener = View.OnTouchListener { _, event ->
+        if (event.actionMasked == MotionEvent.ACTION_DOWN) pokeAutoHide()
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 downRawX = event.rawX
@@ -116,9 +185,15 @@ class FreeWindowView(
                 resizeStartRawX = event.rawX
                 resizeStartRawY = event.rawY
                 resizeStartRect = currentRect()
+                resizeDownX = event.rawX
+                resizeDownY = event.rawY
+                resizeMoved = false
                 parent?.requestDisallowInterceptTouchEvent(true)
             }
             MotionEvent.ACTION_MOVE -> {
+                if (hypot(event.rawX - resizeDownX, event.rawY - resizeDownY) > dp(8)) {
+                    resizeMoved = true
+                }
                 val start = resizeStartRect ?: return@OnTouchListener true
                 val minPx = dp(200)
                 val newW =
@@ -130,7 +205,12 @@ class FreeWindowView(
                 host.onWindowResizePreview(windowId, preview)
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                host.onWindowResizeCommit(windowId, currentRect())
+                if (!resizeMoved && event.actionMasked == MotionEvent.ACTION_UP) {
+                    // Plain tap: arm (or toggle) the title-bar gesture.
+                    host.onResizeAreaTap(windowId)
+                } else {
+                    host.onWindowResizeCommit(windowId, currentRect())
+                }
                 resizeStartRect = null
             }
         }
@@ -168,12 +248,12 @@ class FreeWindowView(
         titleBar.apply {
             orientation = LinearLayout.HORIZONTAL
             setBackgroundColor(0xCC1F1F1F.toInt())
-            // Top strip; the TextureView sits strictly below it (topMargin),
-            // so the bar never covers app UI.
-            layoutParams = LayoutParams(
-                LayoutParams.MATCH_PARENT,
+            // Top strip; hidden by default (GONE = zero height in the
+            // vertical stack, so content fills the whole window).
+            visibility = View.GONE
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
                 dp(TITLE_BAR_DP),
-                Gravity.TOP,
             )
             addView(iconView)
             addView(titleView)
@@ -186,16 +266,13 @@ class FreeWindowView(
 
         textureView.apply {
             // NB: never set a background on a TextureView — it throws
-            // UnsupportedOperationException. Sits below the title bar
-            // (topMargin) and fills the rest 1:1 with the VirtualDisplay,
-            // so touches map without scaling and the bar covers no app UI.
-            layoutParams = LayoutParams(
-                LayoutParams.MATCH_PARENT,
-                LayoutParams.MATCH_PARENT,
-                Gravity.BOTTOM,
-            ).apply {
-                topMargin = dp(TITLE_BAR_DP)
-            }
+            // UnsupportedOperationException. Fills the LinearLayout cell
+            // 1:1 with the VirtualDisplay, so touches map without scaling.
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                0,
+                1f,
+            )
             surfaceTextureListener = surfaceListener
             setOnTouchListener { _, event ->
                 if (event.actionMasked == MotionEvent.ACTION_DOWN) {
@@ -206,19 +283,52 @@ class FreeWindowView(
             }
         }
 
+        // Vertical stack: title bar (gone by default) + content. When the
+        // bar is GONE the TextureView takes the full window, so a maximized
+        // window uses the entire screen.
+        val contentLayout = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LayoutParams(
+                LayoutParams.MATCH_PARENT,
+                LayoutParams.MATCH_PARENT,
+            )
+            addView(titleBar)
+            addView(textureView)
+        }
+
         // Black backdrop behind the (transparent-until-drawn) TextureView.
         setBackgroundColor(0xFF000000.toInt())
-        addView(textureView)
-        addView(titleBar)
+        addView(contentLayout)
 
-        // Invisible resize grab area (bottom-right). No visible dot; the
-        // dashed preview shows while dragging.
+        // Top-left hot corner: only visible (hit-testable) while the
+        // show-title-bar gesture is armed, so it never steals app taps.
+        topLeftTapArea = View(context).apply {
+            setBackgroundColor(Color.TRANSPARENT)
+            layoutParams = LayoutParams(dp(48), dp(48), Gravity.TOP or Gravity.START)
+            visibility = View.GONE
+            setOnTouchListener { _, event ->
+                if (event.actionMasked == MotionEvent.ACTION_UP) {
+                    host.onTopLeftTap(windowId)
+                }
+                true
+            }
+        }
+        addView(topLeftTapArea)
+
+        // Invisible resize grab area (bottom-right). Drag resizes (dashed
+        // preview); a plain tap arms the title-bar gesture.
         val resizeHandle = View(context).apply {
             setBackgroundColor(Color.TRANSPARENT)
             layoutParams = LayoutParams(dp(36), dp(36), Gravity.BOTTOM or Gravity.END)
             setOnTouchListener(resizeTouchListener)
         }
         addView(resizeHandle)
+    }
+
+    override fun onDetachedFromWindow() {
+        removeCallbacks(hideTitleRunnable)
+        removeCallbacks(disarmRunnable)
+        super.onDetachedFromWindow()
     }
 
     // Cached reflection for input injection (hidden APIs).

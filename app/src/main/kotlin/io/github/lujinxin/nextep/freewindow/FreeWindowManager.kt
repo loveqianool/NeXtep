@@ -137,8 +137,7 @@ class FreeWindowManager(
             rebuildDisplay(record, surface)
             return
         }
-        val rect = record.state.rect
-        val (cw, ch) = contentSize(rect)
+        val (cw, ch) = contentSize(record)
         val geometry = SlotGeometry(cw, ch, densityDpi)
         val display = VirtualDisplayFactory(appContext)
             .create(record.state.windowId, geometry, surface)
@@ -163,8 +162,7 @@ class FreeWindowManager(
      */
     private fun rebuildDisplay(record: Record, surface: Surface) {
         val taskId = record.state.taskId
-        val rect = record.state.rect
-        val (cw, ch) = contentSize(rect)
+        val (cw, ch) = contentSize(record)
         val geometry = SlotGeometry(cw, ch, densityDpi)
         val display = VirtualDisplayFactory(appContext)
             .create(record.state.windowId, geometry, surface)
@@ -404,6 +402,29 @@ class FreeWindowManager(
         notifyChanged()
     }
 
+    override fun onResizeAreaTap(windowId: Int) {
+        find(windowId)?.view?.armTitleBarGesture()
+    }
+
+    override fun onTopLeftTap(windowId: Int) {
+        find(windowId)?.view?.onTopLeftTap()
+    }
+
+    override fun onContentSizeChanged(windowId: Int, width: Int, height: Int) {
+        val record = find(windowId) ?: return
+        runCatching {
+            record.virtualDisplay?.resize(
+                width.coerceAtLeast(1), height.coerceAtLeast(1), densityDpi,
+            )
+            NeXtepLog.info(
+                "freewindow",
+                "Title-bar toggled window=$windowId display=${width}x${height}",
+            )
+        }.onFailure { error ->
+            NeXtepLog.warn("freewindow", "Display resize on title toggle failed window=$windowId", error)
+        }
+    }
+
     override fun displayIdForWindow(windowId: Int): Int? {
         val record = find(windowId) ?: return null
         return record.state.displayId.takeIf { it >= 0 }
@@ -415,10 +436,12 @@ class FreeWindowManager(
 
     private fun dp(v: Int) = (v * density).toInt()
 
-    /** VirtualDisplay content size: window rect minus the title bar. */
-    private fun contentSize(rect: Rect): Pair<Int, Int> =
-        rect.width().coerceAtLeast(1) to
-            (rect.height() - dp(TITLE_BAR_DP)).coerceAtLeast(1)
+    /** VirtualDisplay content size: full window, minus the title bar when visible. */
+    private fun contentSize(record: Record): Pair<Int, Int> {
+        val rect = record.state.rect
+        val barPx = if (record.view?.isTitleBarVisible() == true) dp(TITLE_BAR_DP) else 0
+        return rect.width().coerceAtLeast(1) to (rect.height() - barPx).coerceAtLeast(1)
+    }
 
     override fun onWindowResizePreview(windowId: Int, rect: Rect) {
         val clamped = Rect(rect).apply { clampMinSize() }
@@ -501,7 +524,7 @@ class FreeWindowManager(
                 }
         }
         if (resizeDisplay) {
-            val (cw, ch) = contentSize(rect)
+            val (cw, ch) = contentSize(record)
             runCatching {
                 record.virtualDisplay?.resize(cw, ch, densityDpi)
                 NeXtepLog.info(

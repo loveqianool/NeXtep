@@ -53,6 +53,12 @@ interface FreeWindowViewHost {
     fun onWindowSurfaceReady(windowId: Int, surface: Surface)
     /** The VirtualDisplay id backing the window, or null if none. */
     fun displayIdForWindow(windowId: Int): Int?
+    /** Bottom-right resize area tapped (no drag): arm/hide the title bar. */
+    fun onResizeAreaTap(windowId: Int)
+    /** Top-left hot corner tapped. */
+    fun onTopLeftTap(windowId: Int)
+    /** Content area size changed (title bar shown/hidden): resize the display. */
+    fun onContentSizeChanged(windowId: Int, width: Int, height: Int)
 }
 
 interface AppListPanelHost {
