@@ -318,6 +318,8 @@ class FreeWindowManager(
         applyRect(record, full, resizeDisplay = true)
         record.state = record.state.copy(mode = FreeWindowMode.MAXIMIZED)
         record.view?.setMaximized(true)
+        // Maximized uses the full screen; hide the title bar by default.
+        record.view?.hideTitleBar()
         bringToFront(windowId)
         NeXtepLog.info("freewindow", "Maximized window=$windowId")
         notifyChanged()
@@ -331,6 +333,8 @@ class FreeWindowManager(
         applyRect(record, rect, resizeDisplay = true)
         record.state = record.state.copy(mode = FreeWindowMode.WINDOWED)
         record.view?.setMaximized(false)
+        // Windowed shows the title bar by default.
+        record.view?.showTitleBar()
         NeXtepLog.info("freewindow", "Restored window=$windowId rect=$rect")
         notifyChanged()
     }
@@ -545,8 +549,10 @@ class FreeWindowManager(
             rect.width(),
             rect.height(),
             windowType,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+            // Focusable (no NOT_FOCUSABLE) so the IME can show when the app
+            // focuses a text field; NOT_TOUCH_MODAL keeps outside touches
+            // falling through to the system underneath.
+            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
             PixelFormat.TRANSLUCENT,
         ).apply {
             gravity = Gravity.TOP or Gravity.START

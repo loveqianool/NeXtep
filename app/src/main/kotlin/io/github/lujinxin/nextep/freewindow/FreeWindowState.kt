@@ -5,8 +5,8 @@ import android.graphics.Rect
 import android.graphics.drawable.Drawable
 import android.view.Surface
 
-/** Title-bar height in dp. Shown on demand via the two-tap gesture; hidden
- * by default so the app content fills the whole window. */
+/** Title-bar height in dp. Visible by default in windowed mode, hidden in
+ * maximized mode; toggled by the two-tap gesture (bottom-right, top-left). */
 const val TITLE_BAR_DP = 44
 
 /** Window lifecycle mode for a free window. */

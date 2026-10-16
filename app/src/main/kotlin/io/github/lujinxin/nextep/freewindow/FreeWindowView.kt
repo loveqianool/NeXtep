@@ -63,12 +63,11 @@ class FreeWindowView(
     private var resizeDownY = 0f
     private var resizeMoved = false
 
-    // Title-bar visibility: hidden by default. Two-tap gesture
-    // (bottom-right resize area, then top-left corner) shows it;
-    // auto-hides after a few seconds of no interaction.
-    private var titleBarVisible = false
+    // Title-bar visibility. Windowed mode shows it by default; maximized
+    // hides it. Toggled by the two-tap gesture (bottom-right resize area,
+    // then top-left corner).
+    private var titleBarVisible = true
     private var armed = false
-    private val hideTitleRunnable = Runnable { hideTitleBar() }
     private val disarmRunnable = Runnable { setArmed(false) }
 
     fun isTitleBarVisible(): Boolean = titleBarVisible
@@ -98,27 +97,19 @@ class FreeWindowView(
         if (value) postDelayed(disarmRunnable, 3000)
     }
 
-    private fun showTitleBar() {
+    fun showTitleBar() {
         if (titleBarVisible) return
         titleBarVisible = true
         setArmed(false)
         titleBar.visibility = View.VISIBLE
-        pokeAutoHide()
         notifyContentSize()
     }
 
-    private fun hideTitleBar() {
+    fun hideTitleBar() {
         if (!titleBarVisible) return
         titleBarVisible = false
-        removeCallbacks(hideTitleRunnable)
         titleBar.visibility = View.GONE
         notifyContentSize()
-    }
-
-    /** Reset the auto-hide timer; call on any title-bar interaction. */
-    private fun pokeAutoHide() {
-        removeCallbacks(hideTitleRunnable)
-        if (titleBarVisible) postDelayed(hideTitleRunnable, 5000)
     }
 
     private fun notifyContentSize() {
@@ -143,7 +134,6 @@ class FreeWindowView(
     }
 
     private val titleTouchListener = View.OnTouchListener { _, event ->
-        if (event.actionMasked == MotionEvent.ACTION_DOWN) pokeAutoHide()
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 downRawX = event.rawX
@@ -245,9 +235,9 @@ class FreeWindowView(
         titleBar.apply {
             orientation = LinearLayout.HORIZONTAL
             setBackgroundColor(0xCC1F1F1F.toInt())
-            // Top strip; hidden by default (GONE = zero height in the
-            // vertical stack, so content fills the whole window).
-            visibility = View.GONE
+            // Visible by default in windowed mode (GONE = zero height in the
+            // vertical stack, so content fills the whole window when hidden).
+            visibility = View.VISIBLE
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 dp(TITLE_BAR_DP),
@@ -323,7 +313,6 @@ class FreeWindowView(
     }
 
     override fun onDetachedFromWindow() {
-        removeCallbacks(hideTitleRunnable)
         removeCallbacks(disarmRunnable)
         super.onDetachedFromWindow()
     }
