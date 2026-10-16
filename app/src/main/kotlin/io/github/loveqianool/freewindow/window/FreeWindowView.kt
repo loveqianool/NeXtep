@@ -87,9 +87,10 @@ class FreeWindowView @JvmOverloads constructor(
                 host.onSurfaceSizeChanged(windowId)
             }
 
-            // Let the framework release the SurfaceTexture; the Surface we
-            // handed out is released by WindowManager on rebuild/close.
-            override fun onSurfaceTextureDestroyed(st: SurfaceTexture): Boolean = false
+            // Return true: we keep the SurfaceTexture alive; WindowManager
+            // releases the Surface on rebuild/close. Returning false lets the
+            // framework destroy it while the VD still renders to it (blank).
+            override fun onSurfaceTextureDestroyed(st: SurfaceTexture): Boolean = true
 
             override fun onSurfaceTextureUpdated(st: SurfaceTexture) = Unit
         }
