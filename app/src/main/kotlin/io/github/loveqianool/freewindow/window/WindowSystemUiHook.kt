@@ -2,6 +2,7 @@ package io.github.loveqianool.freewindow.window
 
 import android.app.Application
 import android.util.Log
+import io.github.loveqianool.freewindow.notification.AppPanel
 import io.github.loveqianool.freewindow.notification.FreeWindowNotification
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -30,8 +31,23 @@ object WindowSystemUiHook {
             WindowManager.init(app)
             FreeWindowNotification.listener = object : FreeWindowNotification.Listener {
                 override fun onShowPanel() {
-                    // App panel lives in another component; log for now.
                     Log.i(TAG, "show panel requested")
+                    try {
+                        val ctx = app ?: return
+                        val panel = AppPanel(
+                            ctx,
+                            WindowManager.getParkedApps(),
+                            onAppSelected = { component ->
+                                WindowManager.openApp(ctx, component)
+                            },
+                            onParkedSelected = { windowId ->
+                                WindowManager.unparkWindow(windowId)
+                            },
+                        )
+                        panel.show()
+                    } catch (e: Throwable) {
+                        Log.i(TAG, "show panel failed: ${e.message}")
+                    }
                 }
 
                 override fun onUnpark(windowId: Int) = WindowManager.unparkWindow(windowId)

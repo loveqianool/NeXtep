@@ -417,13 +417,18 @@ object WindowManager : WindowHost {
 
     // ------------------------------------------------------------ notification
 
-    private fun updateNotification() {
-        val app = appContext ?: return
-        val parked = windows.values
+    fun getParkedApps(): List<FreeWindowNotification.ParkedApp> {
+        val app = appContext ?: return emptyList()
+        return windows.values
             .filter { it.isParked }
             .map { rec ->
                 FreeWindowNotification.ParkedApp(rec.id, appLabel(app, rec.componentName))
             }
+    }
+
+    private fun updateNotification() {
+        val app = appContext ?: return
+        val parked = getParkedApps()
         FreeWindowNotification.update(app, parked)
     }
 
