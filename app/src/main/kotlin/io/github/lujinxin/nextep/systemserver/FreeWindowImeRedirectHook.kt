@@ -34,7 +34,7 @@ internal object FreeWindowImeRedirectHook {
                 module.hook(method).intercept(object : XposedInterface.Hooker {
                     override fun intercept(chain: XposedInterface.Chain): Any? {
                         // Operation-time log: proves the hook is installed and the method is hit.
-                        NeXtepLog.info("freewindow_ime", "showSoftInput called, args=${chain.getArgCount()}")
+                        NeXtepLog.info("freewindow_ime", "showSoftInput called")
                         return chain.proceed()
                     }
                 })
