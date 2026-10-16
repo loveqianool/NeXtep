@@ -168,11 +168,11 @@ class FreeWindowView(
         titleBar.apply {
             orientation = LinearLayout.HORIZONTAL
             setBackgroundColor(0xCC1F1F1F.toInt())
-            // Floating overlay: the TextureView fills the whole window 1:1
-            // with the VirtualDisplay, so touches map without scaling.
+            // Top strip; the TextureView sits strictly below it (topMargin),
+            // so the bar never covers app UI.
             layoutParams = LayoutParams(
                 LayoutParams.MATCH_PARENT,
-                dp(44),
+                dp(TITLE_BAR_DP),
                 Gravity.TOP,
             )
             addView(iconView)
@@ -186,12 +186,16 @@ class FreeWindowView(
 
         textureView.apply {
             // NB: never set a background on a TextureView — it throws
-            // UnsupportedOperationException. Fills the window 1:1 with the
-            // VirtualDisplay; the view itself has the black backdrop.
+            // UnsupportedOperationException. Sits below the title bar
+            // (topMargin) and fills the rest 1:1 with the VirtualDisplay,
+            // so touches map without scaling and the bar covers no app UI.
             layoutParams = LayoutParams(
                 LayoutParams.MATCH_PARENT,
                 LayoutParams.MATCH_PARENT,
-            )
+                Gravity.BOTTOM,
+            ).apply {
+                topMargin = dp(TITLE_BAR_DP)
+            }
             surfaceTextureListener = surfaceListener
             setOnTouchListener { _, event ->
                 if (event.actionMasked == MotionEvent.ACTION_DOWN) {

@@ -138,11 +138,8 @@ class FreeWindowManager(
             return
         }
         val rect = record.state.rect
-        val geometry = SlotGeometry(
-            rect.width().coerceAtLeast(1),
-            rect.height().coerceAtLeast(1),
-            densityDpi,
-        )
+        val (cw, ch) = contentSize(rect)
+        val geometry = SlotGeometry(cw, ch, densityDpi)
         val display = VirtualDisplayFactory(appContext)
             .create(record.state.windowId, geometry, surface)
             .getOrElse { error ->
@@ -167,11 +164,8 @@ class FreeWindowManager(
     private fun rebuildDisplay(record: Record, surface: Surface) {
         val taskId = record.state.taskId
         val rect = record.state.rect
-        val geometry = SlotGeometry(
-            rect.width().coerceAtLeast(1),
-            rect.height().coerceAtLeast(1),
-            densityDpi,
-        )
+        val (cw, ch) = contentSize(rect)
+        val geometry = SlotGeometry(cw, ch, densityDpi)
         val display = VirtualDisplayFactory(appContext)
             .create(record.state.windowId, geometry, surface)
             .getOrElse { error ->
@@ -421,6 +415,11 @@ class FreeWindowManager(
 
     private fun dp(v: Int) = (v * density).toInt()
 
+    /** VirtualDisplay content size: window rect minus the title bar. */
+    private fun contentSize(rect: Rect): Pair<Int, Int> =
+        rect.width().coerceAtLeast(1) to
+            (rect.height() - dp(TITLE_BAR_DP)).coerceAtLeast(1)
+
     override fun onWindowResizePreview(windowId: Int, rect: Rect) {
         val clamped = Rect(rect).apply { clampMinSize() }
         val view = resizePreview ?: run {
@@ -502,11 +501,12 @@ class FreeWindowManager(
                 }
         }
         if (resizeDisplay) {
+            val (cw, ch) = contentSize(rect)
             runCatching {
-                record.virtualDisplay?.resize(rect.width(), rect.height(), densityDpi)
+                record.virtualDisplay?.resize(cw, ch, densityDpi)
                 NeXtepLog.info(
                     "freewindow",
-                    "Resized display window=${record.state.windowId} to ${rect.width()}x${rect.height()}",
+                    "Resized display window=${record.state.windowId} to ${cw}x${ch}",
                 )
             }.onFailure { error ->
                 NeXtepLog.warn("freewindow", "VirtualDisplay.resize failed window=${record.state.windowId}", error)

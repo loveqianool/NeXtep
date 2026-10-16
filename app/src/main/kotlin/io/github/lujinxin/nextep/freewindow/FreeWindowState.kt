@@ -5,6 +5,10 @@ import android.graphics.Rect
 import android.graphics.drawable.Drawable
 import android.view.Surface
 
+/** Title-bar height in dp. The app content (TextureView / VirtualDisplay)
+ * sits strictly below it so the bar never covers app UI. */
+const val TITLE_BAR_DP = 44
+
 /** Window lifecycle mode for a free window. */
 enum class FreeWindowMode {
     /** Normal floating window with a free rect. */
