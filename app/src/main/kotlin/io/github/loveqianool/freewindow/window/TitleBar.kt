@@ -80,12 +80,19 @@ class TitleBar @JvmOverloads constructor(
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        // We only get here after intercepting a drag.
         when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                // Claim the stream for blank-area touches; buttons use intercept path.
+                lastRawX = event.rawX
+                lastRawY = event.rawY
+                dragging = false
+                return true
+            }
             MotionEvent.ACTION_MOVE -> {
+                val dx = event.rawX - lastRawX
+                val dy = event.rawY - lastRawY
+                if (!dragging && hypot(dx, dy) > touchSlop) dragging = true
                 if (dragging) {
-                    val dx = event.rawX - lastRawX
-                    val dy = event.rawY - lastRawY
                     host.onMove(windowId, dx.toInt(), dy.toInt())
                     lastRawX = event.rawX
                     lastRawY = event.rawY
