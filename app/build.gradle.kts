@@ -2,6 +2,18 @@ plugins {
     alias(libs.plugins.android.application)
 }
 
+// Persistent debug keystore: CI runners are ephemeral, so without this every
+// build gets a fresh random debug key and Android refuses to update-install
+// over the previous build (signature mismatch -> must uninstall first).
+// The keystore bytes are base64'd in debug.keystore.b64 (debug key only,
+// safe to commit; NOT a release key).
+val debugKeystoreFile = file("debug.keystore")
+if (!debugKeystoreFile.exists()) {
+    debugKeystoreFile.writeBytes(
+        java.util.Base64.getDecoder().decode(file("debug.keystore.b64").readText().trim()),
+    )
+}
+
 android {
     namespace = "io.github.lujinxin.nextep"
     compileSdk {
@@ -24,6 +36,15 @@ android {
             optimization {
                 enable = false
             }
+        }
+    }
+
+    signingConfigs {
+        getByName("debug") {
+            storeFile = debugKeystoreFile
+            storePassword = "nextep-debug"
+            keyAlias = "nextepdebug"
+            keyPassword = "nextep-debug"
         }
     }
 
