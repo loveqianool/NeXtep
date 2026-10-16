@@ -549,9 +549,31 @@ class FreeWindowManager(
     }
 
     private fun fullRect(): Rect {
-        val metrics = appContext.resources.displayMetrics
-        return Rect(0, 0, metrics.widthPixels, metrics.heightPixels)
+        // Usable screen area: full bounds minus status bar / navigation bar /
+        // cutout, so a maximized window is never hidden behind system bars.
+        return runCatching {
+            val wm = appContext.getSystemService(WindowManager::class.java)
+                ?: return@runCatching Rect(0, 0, metricsWidth(), metricsHeight())
+            val windowMetrics = wm.currentWindowMetrics
+            val bounds = windowMetrics.bounds
+            val insets = windowMetrics.windowInsets.getInsetsIgnoringVisibility(
+                android.view.WindowInsets.Type.statusBars() or
+                    android.view.WindowInsets.Type.navigationBars() or
+                    android.view.WindowInsets.Type.displayCutout(),
+            )
+            Rect(
+                bounds.left + insets.left,
+                bounds.top + insets.top,
+                bounds.right - insets.right,
+                bounds.bottom - insets.bottom,
+            )
+        }.getOrElse {
+            Rect(0, 0, metricsWidth(), metricsHeight())
+        }
     }
+
+    private fun metricsWidth(): Int = appContext.resources.displayMetrics.widthPixels
+    private fun metricsHeight(): Int = appContext.resources.displayMetrics.heightPixels
 
     private fun Rect.clampToScreen() {
         val metrics = appContext.resources.displayMetrics
