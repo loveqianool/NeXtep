@@ -18,12 +18,9 @@ internal object FreeWindowImeRedirectHook {
                 "com.android.server.inputmethod.InputMethodManagerService",
                 "com.android.server.InputMethodManagerService",
             )
-            var immsClass: Class<*>? = null
-            for (name in candidates) {
-                immsClass = runCatching { classLoader.loadClass(name) }.getOrNull()
-                if (immsClass != null) break
+            val immsClass: Class<*> = candidates.firstNotNullOf { name ->
+                runCatching { classLoader.loadClass(name) }.getOrNull()
             }
-            checkNotNull(immsClass) { "IMMS class not found in $candidates" }
             val methods = immsClass.declaredMethods.filter { it.name == "showSoftInput" }
             check(methods.isNotEmpty()) {
                 "showSoftInput not found; have: " +
