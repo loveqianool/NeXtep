@@ -81,15 +81,13 @@ object WindowManager : WindowHost {
         view.onSurfaceReady = { surface -> onSurfaceAvailable(id, surface) }
         wmRef.addView(view, windowParams(rect))
         synchronized(zOrder) { zOrder.add(id) }
-        // If the same package already has a muted window, inherit its state;
-        // otherwise sync to unmuted (AppOps mute is persistent and may be left
-        // over from a previous session).
+        // If the same package already has a muted window, inherit its state.
+        // (The unmute sync for a fresh package happens in onSurfaceAvailable,
+        // after the display is created and the receiver is registered.)
         val pkg = componentName.packageName
         val inherited = windows.values.any { it.isMuted && it.componentName.packageName == pkg }
         if (inherited) {
             view.setMuted(true)
-        } else {
-            WindowMute.setMuted(app, pkg, false)
         }
         windows[id] = WindowRecord(
             id = id,
@@ -305,6 +303,15 @@ object WindowManager : WindowHost {
         rec.view.displayId = displayId
         windows[id] = rec.copy(displayId = displayId)
         launchOnDisplay(app, rec.componentName, displayId)
+        // Sync mute state now that the display exists (receiver is registered
+        // via the display hook). AppOps mute is persistent; clear any leftover
+        // from a previous session unless another window of the same package
+        // is currently muted.
+        val pkg = rec.componentName.packageName
+        val recNow = windows[id]
+        if (recNow != null && !recNow.isMuted) {
+            WindowMute.setMuted(app, pkg, false)
+        }
         Log.i(TAG, "openApp id=$id launched on display=$displayId")
         handler.postDelayed({ resolveTaskId(id) }, 500)
     }

@@ -13,11 +13,20 @@ import io.github.loveqianool.freewindow.window.WindowMute
  */
 object ServerHook {
     private const val TAG = "FreeWindow"
-    private const val PREFS = "freewindow_mute"
-    private const val MUTED_PKGS = "muted_pkgs"
+    /** File tracking packages muted by FreeWindow (system_server can't use SharedPreferences). */
+    private val mutedFile = java.io.File("/data/system/freewindow_muted.txt")
     private var installed = false
     /** Ensures the mute receiver is registered exactly once, from either trigger. */
     private val muteReceiverStarted = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    private fun loadMuted(): MutableSet<String> =
+        runCatching {
+            mutedFile.readLines().filter { it.isNotBlank() }.toMutableSet()
+        }.getOrDefault(mutableSetOf())
+
+    private fun saveMuted(s: Set<String>) =
+        runCatching { mutedFile.writeText(s.joinToString("\n")) }
+            .onFailure { Log.w(TAG, "save muted file failed", it) }
 
     fun install(module: XposedModule, classLoader: ClassLoader) {
         if (installed) return
@@ -106,15 +115,9 @@ object ServerHook {
                     return
                 }
                 // Persist the muted set so a crash/reboot can be cleaned up.
-                // Wrapped: SharedPreferences on system context may fail;
-                // must not break the mute itself.
-                runCatching {
-                    val prefs = ctx.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE)
-                    val set = prefs.getStringSet(MUTED_PKGS, emptySet())?.toMutableSet()
-                        ?: mutableSetOf()
-                    if (muted) set.add(pkg) else set.remove(pkg)
-                    prefs.edit().putStringSet(MUTED_PKGS, set).apply()
-                }.onFailure { Log.w(TAG, "persist muted set failed", it) }
+                val mutedSet = loadMuted()
+                if (muted) mutedSet.add(pkg) else mutedSet.remove(pkg)
+                saveMuted(mutedSet)
                 doSetMuted(pkg, uid, muted)
             }
         }
@@ -132,10 +135,10 @@ object ServerHook {
             return
         }
         // Restore: clear any persistent mute left by a crash/reboot.
-        // Separate try so a failure here can't break the registration above.
-        runCatching {
-            val prefs = ctx.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE)
-            prefs.getStringSet(MUTED_PKGS, emptySet())?.forEach { pkg ->
+        // Separate from registration so a failure here can't break it.
+        val leftover = loadMuted()
+        if (leftover.isNotEmpty()) {
+            leftover.forEach { pkg ->
                 try {
                     val uid = ctx.packageManager.getApplicationInfo(pkg, 0).uid
                     doSetMuted(pkg, uid, false)
@@ -143,8 +146,8 @@ object ServerHook {
                     Log.w(TAG, "restore mute failed for $pkg", e)
                 }
             }
-            prefs.edit().remove(MUTED_PKGS).apply()
-        }.onFailure { Log.w(TAG, "restore muted set failed", it) }
+            saveMuted(emptySet())
+        }
     }
 
     /** Runs in system_server; has MANAGE_APP_OPS_MODES. */
