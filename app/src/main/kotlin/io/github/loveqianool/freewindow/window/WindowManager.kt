@@ -219,18 +219,27 @@ object WindowManager : WindowHost {
         } else {
             wmRef.updateViewLayout(rec.view, params)
             rec.view.requestLayout()
-            Log.i(TAG, "onResizeCommit: updateViewLayout called, view=${rec.view.width}x${rec.view.height}")
         }
-        pendingResize[id] = true
+        // Resize the VirtualDisplay in place (no rebuild, no task move).
+        // This is how the main branch does it.
+        val vd = displays[id]
+        if (vd != null) {
+            val app = appContext
+            val dpi = if (app != null) densityDpi(app) else 440
+            runCatching {
+                vd.resize(rect.width(), rect.height(), dpi)
+                Log.i(TAG, "onResizeCommit: vd resized to ${rect.width()}x${rect.height()}")
+            }.onFailure {
+                Log.i(TAG, "onResizeCommit: vd.resize failed: ${it.message}")
+            }
+        } else {
+            Log.i(TAG, "onResizeCommit: no vd for id=$id")
+        }
     }
 
     override fun onSurfaceSizeChanged(id: Int) {
-        if (pendingResize.remove(id) != true) return
-        val surface = surfaces[id] ?: return
-        rebuildDisplay(id, surface)
+        // No-op: resize uses vd.resize() directly, no rebuild needed.
     }
-
-    private val pendingResize = mutableMapOf<Int, Boolean>()
 
     override fun currentRect(id: Int): android.graphics.Rect {
         val rec = windows[id] ?: return android.graphics.Rect()
