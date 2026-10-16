@@ -25,7 +25,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "io.github.loveqianool.nextep"
+        applicationId = "io.github.loveqianool.freewindow"
         minSdk = 35
         targetSdk = 36
         versionCode = 10
