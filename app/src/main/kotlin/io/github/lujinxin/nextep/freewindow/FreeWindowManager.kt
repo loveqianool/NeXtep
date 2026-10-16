@@ -37,19 +37,11 @@ import kotlin.math.min
  * The TextureView surface is recreated on re-add, so the VirtualDisplay is
  * rebuilt on the new surface and the task is moved over via
  * ActivityTaskManagerCompat.moveTaskToDisplay (state is preserved).
- *
- * The floating ball and app-list panel are owned by FreeWindowSystemUiHook;
- * [restackOverlay] is called after z-order changes so the hook can keep
- * panel/ball above windows.
  */
 class FreeWindowManager(
     context: Context,
     private val windowManager: WindowManager,
     private val windowType: Int,
-    /** Screen-space bounds of the floating ball, or null when unknown. */
-    private val ballBounds: () -> Rect?,
-    /** Re-add panel/ball above windows after z-order changes. */
-    private val restackOverlay: () -> Unit,
 ) : FreeWindowViewHost {
 
     interface Listener {
@@ -132,7 +124,6 @@ class FreeWindowManager(
             records.remove(record)
             return -1
         }
-        restackOverlay()
         notifyChanged()
         NeXtepLog.info("freewindow", "Launched window=$windowId component=$component rect=$rect")
         return windowId
@@ -379,7 +370,6 @@ class FreeWindowManager(
         }.onFailure { error ->
             NeXtepLog.warn("freewindow", "bringToFront failed window=$windowId", error)
         }
-        restackOverlay()
         notifyChanged()
     }
 
@@ -409,18 +399,6 @@ class FreeWindowManager(
         rect.clampToScreen()
         // Live drag: move the window, no display resize needed.
         applyRect(record, rect, resizeDisplay = false)
-    }
-
-    override fun onWindowCarryRelease(windowId: Int, centerX: Int, centerY: Int) {
-        val record = find(windowId) ?: return
-        // The view already moved live; sync the final rect, then park when
-        // the drop lands on the floating ball.
-        record.view?.let { record.state = record.state.copy(rect = it.currentRect()) }
-        if (ballBounds()?.contains(centerX, centerY) == true) {
-            parkWindow(windowId)
-        } else {
-            notifyChanged()
-        }
     }
 
     override fun onWindowResizeCommit(windowId: Int, rect: Rect) {

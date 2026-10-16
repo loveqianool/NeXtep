@@ -40,7 +40,6 @@ data class FreeWindowState(
 interface FreeWindowViewHost {
     fun onWindowTap(windowId: Int)
     fun onWindowMove(windowId: Int, dx: Int, dy: Int)
-    fun onWindowCarryRelease(windowId: Int, centerX: Int, centerY: Int)
     fun onWindowResizePreview(windowId: Int, rect: Rect)
     fun onWindowResizeCommit(windowId: Int, rect: Rect)
     fun onWindowClose(windowId: Int)
@@ -50,13 +49,6 @@ interface FreeWindowViewHost {
     fun onWindowSurfaceReady(windowId: Int, surface: Surface)
     /** The VirtualDisplay id backing the window, or null if none. */
     fun displayIdForWindow(windowId: Int): Int?
-}
-
-interface FloatingBallHost {
-    fun onBallMove(dx: Int, dy: Int)
-    fun onBallTap()
-    fun onBallRelease()
-    fun onBallLongPress()
 }
 
 interface AppListPanelHost {

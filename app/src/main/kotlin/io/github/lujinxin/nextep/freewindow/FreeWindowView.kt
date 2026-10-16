@@ -47,20 +47,13 @@ class FreeWindowView(
     private val titleBar = LinearLayout(context)
     private val textureView = TextureView(context)
 
-    // Title-bar drag / long-press-carry state.
+    // Title-bar drag state.
     private var downRawX = 0f
     private var downRawY = 0f
     private var lastRawX = 0f
     private var lastRawY = 0f
     private var titleDown = false
     private var titleDragging = false
-    private var titleCarry = false
-    private val carryRunnable = Runnable {
-        if (titleDown && !titleDragging) {
-            titleCarry = true
-            animate().alpha(0.8f).setDuration(120).start()
-        }
-    }
 
     // Resize-handle state.
     private var resizeStartRawX = 0f
@@ -91,8 +84,6 @@ class FreeWindowView(
                 lastRawY = event.rawY
                 titleDown = true
                 titleDragging = false
-                titleCarry = false
-                postDelayed(carryRunnable, 500)
                 parent?.requestDisallowInterceptTouchEvent(true)
             }
             MotionEvent.ACTION_MOVE -> {
@@ -100,7 +91,6 @@ class FreeWindowView(
                     hypot(event.rawX - downRawX, event.rawY - downRawY) > dp(8)
                 ) {
                     titleDragging = true
-                    removeCallbacks(carryRunnable)
                 }
                 if (titleDragging) {
                     val dx = (event.rawX - lastRawX).toInt()
@@ -111,15 +101,10 @@ class FreeWindowView(
                 }
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                removeCallbacks(carryRunnable)
                 titleDown = false
-                if (titleCarry) {
-                    host.onWindowCarryRelease(windowId, event.rawX.toInt(), event.rawY.toInt())
-                } else if (!titleDragging) {
+                if (!titleDragging) {
                     host.onWindowTap(this@FreeWindowView.windowId)
                 }
-                titleCarry = false
-                animate().alpha(1f).setDuration(120).start()
             }
         }
         true
@@ -233,11 +218,6 @@ class FreeWindowView(
             setOnTouchListener(resizeTouchListener)
         }
         addView(resizeHandle)
-    }
-
-    override fun onDetachedFromWindow() {
-        removeCallbacks(carryRunnable)
-        super.onDetachedFromWindow()
     }
 
     // Cached reflection for input injection (hidden APIs).
