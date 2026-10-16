@@ -81,6 +81,16 @@ object WindowManager : WindowHost {
         view.onSurfaceReady = { surface -> onSurfaceAvailable(id, surface) }
         wmRef.addView(view, windowParams(rect))
         synchronized(zOrder) { zOrder.add(id) }
+        // If the same package already has a muted window, inherit its state;
+        // otherwise sync to unmuted (AppOps mute is persistent and may be left
+        // over from a previous session).
+        val pkg = componentName.packageName
+        val inherited = windows.values.any { it.isMuted && it.componentName.packageName == pkg }
+        if (inherited) {
+            view.setMuted(true)
+        } else {
+            WindowMute.setMuted(app, pkg, false)
+        }
         windows[id] = WindowRecord(
             id = id,
             view = view,
@@ -89,11 +99,8 @@ object WindowManager : WindowHost {
             componentName = componentName,
             isParked = false,
             isMaximized = false,
-            isMuted = false,
+            isMuted = inherited,
         )
-        // AppOps mute is persistent; a previous session may have left this
-        // package muted. Sync to unmuted so the icon (🔊) matches reality.
-        WindowMute.setMuted(app, componentName.packageName, false)
         Log.i(TAG, "openApp id=$id component=$componentName rect=$rect")
         return id
     }

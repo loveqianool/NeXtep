@@ -1,7 +1,7 @@
 id=nextep
 name=FreeWindow
-version=1.2.2
-versionCode=10
+version=1.2.3
+versionCode=11
 author=loveqianool
 description=Floating ball + free windows + per-window mute LSPosed module
 minApiVersion=101

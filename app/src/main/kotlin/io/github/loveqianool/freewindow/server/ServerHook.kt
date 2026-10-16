@@ -13,6 +13,8 @@ import io.github.loveqianool.freewindow.window.WindowMute
  */
 object ServerHook {
     private const val TAG = "FreeWindow"
+    private const val PREFS = "freewindow_mute"
+    private const val MUTED_PKGS = "muted_pkgs"
     private var installed = false
 
     fun install(module: XposedModule, classLoader: ClassLoader) {
@@ -30,7 +32,11 @@ object ServerHook {
     private fun hookSystemReady(module: XposedModule, cl: ClassLoader) {
         try {
             val ams = cl.loadClass("com.android.server.am.ActivityManagerService")
-            val m = ams.declaredMethods.firstOrNull { it.name == "systemReady" } ?: run {
+            // Match the systemReady(Runnable) overload; some ROMs have multiple.
+            val m = ams.declaredMethods.firstOrNull {
+                it.name == "systemReady" &&
+                    it.parameterTypes.any { p -> p == Runnable::class.java }
+            } ?: ams.declaredMethods.firstOrNull { it.name == "systemReady" } ?: run {
                 Log.w(TAG, "systemReady not found")
                 return
             }
@@ -63,25 +69,46 @@ object ServerHook {
      *
      * The receiver requires STATUS_BAR_SERVICE permission (held by systemui),
      * so third-party apps cannot mute arbitrary packages.
+     *
+     * Muted packages are persisted; on registration any leftovers from a
+     * crash/reboot (where closeWindow never ran) are restored to default.
      */
     private fun installMuteReceiver(ctx: android.content.Context) {
         try {
+            // Restore: clear any persistent mute left by a crash/reboot.
+            val prefs = ctx.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE)
+            prefs.getStringSet(MUTED_PKGS, emptySet())?.forEach { pkg ->
+                try {
+                    val uid = ctx.packageManager.getApplicationInfo(pkg, 0).uid
+                    doSetMuted(pkg, uid, false)
+                } catch (e: Throwable) {
+                    Log.w(TAG, "restore mute failed for $pkg", e)
+                }
+            }
+            prefs.edit().remove(MUTED_PKGS).apply()
+
+            val thread = android.os.HandlerThread("FreeWindowMute").apply { start() }
+            val handler = android.os.Handler(thread.looper)
             val receiver = object : android.content.BroadcastReceiver() {
                 override fun onReceive(context: android.content.Context, intent: android.content.Intent) {
-                    Log.i(TAG, "mute receiver: got broadcast ${intent.action}")
+                    Log.d(TAG, "mute receiver: got broadcast ${intent.action}")
                     if (intent.action != WindowMute.ACTION_MUTE) return
                     val pkg = intent.getStringExtra(WindowMute.EXTRA_PACKAGE) ?: return
                     val muted = intent.getBooleanExtra(WindowMute.EXTRA_MUTED, false)
-                    // Compute uid in system_server; don't trust the broadcast extra
-                    // (multi-user / app clones have different uids).
+                    // Compute uid in system_server for the current user.
+                    // (Multi-user / app clones need getApplicationInfoAsUser;
+                    // not yet supported — only the current user is handled.)
                     val uid = try {
-                        val pm = ctx.packageManager
-                        val userId = android.os.Process.myUserHandle().hashCode()
-                        pm.getApplicationInfo(pkg, 0).uid
+                        ctx.packageManager.getApplicationInfo(pkg, 0).uid
                     } catch (e: Throwable) {
                         Log.w(TAG, "mute: uid lookup failed for $pkg", e)
                         return
                     }
+                    // Persist the muted set so a crash/reboot can be cleaned up.
+                    val set = prefs.getStringSet(MUTED_PKGS, emptySet())?.toMutableSet()
+                        ?: mutableSetOf()
+                    if (muted) set.add(pkg) else set.remove(pkg)
+                    prefs.edit().putStringSet(MUTED_PKGS, set).apply()
                     doSetMuted(pkg, uid, muted)
                 }
             }
@@ -89,7 +116,7 @@ object ServerHook {
                 receiver,
                 android.content.IntentFilter(WindowMute.ACTION_MUTE),
                 "android.permission.STATUS_BAR_SERVICE",
-                null,
+                handler,
                 android.content.Context.RECEIVER_EXPORTED,
             )
             Log.i(TAG, "mute receiver registered")
@@ -113,8 +140,10 @@ object ServerHook {
             val stub = Class.forName("com.android.internal.app.IAppOpsService\$Stub")
             val appOps = stub.getMethod("asInterface", android.os.IBinder::class.java)
                 .invoke(null, binder) ?: return
+            // MODE_DEFAULT (3) clears our override and restores system default,
+            // instead of leaving a persistent explicit MODE_ALLOWED.
             val mode = if (muted) android.app.AppOpsManager.MODE_IGNORED
-                       else android.app.AppOpsManager.MODE_ALLOWED
+                       else android.app.AppOpsManager.MODE_DEFAULT
             appOps.javaClass.getMethod(
                 "setMode",
                 Int::class.javaPrimitiveType, Int::class.javaPrimitiveType,
