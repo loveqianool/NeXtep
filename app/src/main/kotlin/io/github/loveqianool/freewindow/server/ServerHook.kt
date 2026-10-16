@@ -230,6 +230,37 @@ object ServerHook {
                 }
             })
             Log.i(TAG, "ServerHook installed")
+
+            // Hook getImePolicy() so FreeWindow virtual displays use LOCAL IME
+            // policy: the keyboard shows inside the window, not on the main
+            // display. This avoids the mImeInputTarget=null issue where the
+            // keyboard appears then immediately hides.
+            val imeMethod = displayClass.declaredMethods.firstOrNull {
+                it.name == "getImePolicy" && it.parameterTypes.isEmpty()
+            }
+            if (imeMethod != null) {
+                imeMethod.isAccessible = true
+                module.hook(imeMethod).intercept(object : XposedInterface.Hooker {
+                    override fun intercept(chain: XposedInterface.Chain): Any? {
+                        val result = chain.proceed()
+                        try {
+                            val display = chain.thisObject ?: return result
+                            val info = callNoArg(display, "getDisplayInfo") ?: return result
+                            val name = getField(info, "name") as? String ?: return result
+                            if (!name.startsWith(DisplayEngine.PREFIX)) return result
+                            // DISPLAY_IME_POLICY_LOCAL = 1
+                            Log.i(TAG, "$name using LOCAL IME policy")
+                            return 1
+                        } catch (e: Throwable) {
+                            Log.w(TAG, "IME policy hook failed open", e)
+                        }
+                        return result
+                    }
+                })
+                Log.i(TAG, "IME policy hook installed")
+            } else {
+                Log.w(TAG, "getImePolicy not found")
+            }
         } catch (e: Throwable) {
             Log.w(TAG, "ServerHook install failed", e)
         }

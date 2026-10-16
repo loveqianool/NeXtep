@@ -11,13 +11,12 @@ import android.view.WindowManager
  * How it works:
  * - A free window defaults to NOT_FOCUSABLE: touches inside are forwarded to
  *   the VirtualDisplay, touches outside fall through (NOT_TOUCH_MODAL), and
- *   the overlay never steals input focus from the system underneath — so the
- *   IME keeps working for underlying apps.
+ *   the overlay never steals input focus from the system underneath.
  * - When the user taps inside the window ([MotionEvent.ACTION_DOWN]),
- *   [setFocusable] clears NOT_FOCUSABLE. The window can then take focus, and
- *   the system shows the IME on the main display for the app running on the
- *   VirtualDisplay (the VirtualDisplay carries OWN_CONTENT_ONLY, which keeps
- *   system windows such as the IME off it).
+ *   [setFocusable] clears NOT_FOCUSABLE. The window can then take focus.
+ * - The VirtualDisplay uses LOCAL IME policy (see ServerHook): the keyboard
+ *   shows inside the window itself, not on the main display. This avoids the
+ *   mImeInputTarget=null issue where the keyboard appears then hides.
  * - When the user taps outside the window ([MotionEvent.ACTION_OUTSIDE],
  *   delivered via FLAG_WATCH_OUTSIDE_TOUCH), [setFocusable] restores
  *   NOT_FOCUSABLE so focus returns to whatever is underneath.

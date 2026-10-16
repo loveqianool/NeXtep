@@ -63,8 +63,10 @@ class DisplayEngine(private val context: Context) {
     }
 
     private fun resolveFlags(): Int {
-        var flags = DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY or
-            DisplayManager.VIRTUAL_DISPLAY_FLAG_PRESENTATION
+        // OWN_CONTENT_ONLY removed: with LOCAL IME policy the keyboard shows
+        // inside the window, so the virtual display needs to allow system
+        // windows (IME).
+        var flags = DisplayManager.VIRTUAL_DISPLAY_FLAG_PRESENTATION
         // TRUSTED, OWN_FOCUS etc. may be hidden; read via reflection.
         flags = flags or readFlag("VIRTUAL_DISPLAY_FLAG_TRUSTED")
         flags = flags or readFlag("VIRTUAL_DISPLAY_FLAG_OWN_FOCUS")
