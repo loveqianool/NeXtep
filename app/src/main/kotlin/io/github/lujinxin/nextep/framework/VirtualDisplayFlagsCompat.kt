@@ -7,13 +7,14 @@ object VirtualDisplayFlagsCompat {
     data class Resolved(val value: Int, val names: List<String>)
 
     fun resolveCandidates(): List<Resolved> {
-        // NB: Do NOT set VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY. It blocks
-        // system windows (notably the IME) from appearing on the display.
-        // VIRTUAL_DISPLAY_FLAG_PRESENTATION is also avoided: presentation
-        // displays are not expected to host an IME.
-        // The free window needs the IME to show inside its VirtualDisplay.
-        var value = 0
-        val names = mutableListOf<String>()
+        // Keep OWN_CONTENT_ONLY: it forces the IME to show on the main
+        // display instead of the VirtualDisplay. The keyboard pops up on
+        // main, above our window — which is exactly what we want.
+        // (Upstream does the same.)
+        val fallbackValue = DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY or
+            DisplayManager.VIRTUAL_DISPLAY_FLAG_PRESENTATION
+        var value = fallbackValue
+        val names = mutableListOf("OWN_CONTENT_ONLY", "PRESENTATION")
 
         listOf(
             "VIRTUAL_DISPLAY_FLAG_TRUSTED" to "TRUSTED",
@@ -37,7 +38,10 @@ object VirtualDisplayFlagsCompat {
             }
         }
         val preferred = Resolved(value, names.toList())
-        val fallback = Resolved(0, listOf("NONE"))
+        val fallback = Resolved(
+            fallbackValue,
+            listOf("OWN_CONTENT_ONLY", "PRESENTATION"),
+        )
         return listOf(preferred, ownFocus, fallback).distinctBy { it.value }.also { candidates ->
             NeXtepLog.info(
                 "virtual_display_flags",

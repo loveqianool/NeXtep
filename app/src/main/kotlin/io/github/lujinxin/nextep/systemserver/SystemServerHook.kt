@@ -22,7 +22,6 @@ object SystemServerHook {
 
     fun install(module: XposedModule, classLoader: ClassLoader) {
         if (!installed.compareAndSet(false, true)) return
-        NeXtepLog.info("systemserver", "SystemServerHook.install() entered")
         val slotVideoExitInstalled = HookGuard.run("slot_video_exit") {
             check(FeatureGate.VIRTUAL_DISPLAY_SLOTS.defaultEnabled)
             val activityClass = classLoader.loadClass("com.android.server.wm.ActivityRecord")
@@ -45,8 +44,6 @@ object SystemServerHook {
             NeXtepLog.info("slot_display_config", "Installed package-independent slot capability matching")
         }
         HookGuard.run("freewindow_mute") { FreeWindowMuteHook.install() }
-        // NB: FreeWindowImeRedirectHook.install() has its own HookGuard; do not wrap again.
-        FreeWindowImeRedirectHook.install(module, classLoader)
         if (!slotConfigInstalled && !slotVideoExitInstalled) {
             // Nothing was installed; keep the guard open for a potential future retry.
             installed.set(false)
