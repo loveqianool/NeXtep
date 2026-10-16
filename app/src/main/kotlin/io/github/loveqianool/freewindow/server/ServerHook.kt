@@ -4,7 +4,6 @@ import android.content.res.Configuration
 import android.util.Log
 import io.github.libxposed.api.XposedInterface
 import io.github.libxposed.api.XposedModule
-import android.util.Log
 import io.github.loveqianool.freewindow.window.WindowMute
 
 /**
@@ -28,14 +27,14 @@ object ServerHook {
      * which holds MANAGE_APP_OPS_MODES — systemui does not.
      */
     private fun installMuteReceiver() {
-        Log.i("installMuteReceiver: starting")
+        Log.i(TAG, "installMuteReceiver: starting")
         try {
             val atClass = Class.forName("android.app.ActivityThread")
             val app = atClass.getDeclaredMethod("currentApplication")
                 .apply { isAccessible = true }
                 .invoke(null) as? android.content.Context
                 ?: run {
-                    Log.w("mute receiver: no app context")
+                    Log.w(TAG, "mute receiver: no app context")
                     return
                 }
             val receiver = object : android.content.BroadcastReceiver() {
@@ -52,9 +51,9 @@ object ServerHook {
                 android.content.IntentFilter(WindowMute.ACTION_MUTE),
                 android.content.Context.RECEIVER_EXPORTED,
             )
-            Log.i("mute receiver registered")
+            Log.i(TAG, "mute receiver registered")
         } catch (e: Throwable) {
-            Log.w("mute receiver install failed", e)
+            Log.w(TAG, "mute receiver install failed", e)
         }
     }
 
@@ -81,9 +80,9 @@ object ServerHook {
                 String::class.java, Int::class.javaPrimitiveType,
             ).apply { isAccessible = true }
                 .invoke(appOps, op, uid, packageName, mode)
-            Log.i("mute: set muted=$muted uid=$uid pkg=$packageName")
+            Log.i(TAG, "mute: set muted=$muted uid=$uid pkg=$packageName")
         } catch (e: Throwable) {
-            Log.i("mute failed: ${e.javaClass.simpleName}: ${e.message}")
+            Log.i(TAG, "mute failed: ${e.javaClass.simpleName}: ${e.message}")
         }
     }
 

@@ -7,6 +7,7 @@ import android.util.Log
  * See [setMuted] for the Vector caching caveat.
  */
 object WindowMute {
+    private const val TAG = "FreeWindow"
     /** Broadcast action for mute requests (handled in system_server). */
     const val ACTION_MUTE = "io.github.loveqianool.freewindow.action.MUTE"
     const val EXTRA_PACKAGE = "package"
@@ -29,9 +30,9 @@ object WindowMute {
                 putExtra(EXTRA_MUTED, muted)
             }
             context.sendBroadcast(intent)
-            Log.i("WindowMute: broadcast muted=$muted uid=$uid package=$packageName")
+            Log.i(TAG, "WindowMute: broadcast muted=$muted uid=$uid package=$packageName")
         } catch (e: Throwable) {
-            Log.w("WindowMute: broadcast failed", e)
+            Log.w(TAG, "WindowMute: broadcast failed", e)
         }
     }
 }
