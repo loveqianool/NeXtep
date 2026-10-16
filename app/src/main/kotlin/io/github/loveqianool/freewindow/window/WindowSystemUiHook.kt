@@ -43,6 +43,9 @@ object WindowSystemUiHook {
                             onParkedSelected = { windowId ->
                                 WindowManager.unparkWindow(windowId)
                             },
+                            onParkedClosed = { windowId ->
+                                WindowManager.closeWindow(windowId)
+                            },
                         )
                         panel.show()
                     } catch (e: Throwable) {
@@ -51,6 +54,8 @@ object WindowSystemUiHook {
                 }
 
                 override fun onUnpark(windowId: Int) = WindowManager.unparkWindow(windowId)
+
+                override fun onClose(windowId: Int) = WindowManager.closeWindow(windowId)
 
                 override fun onExit() = WindowManager.exit()
             }

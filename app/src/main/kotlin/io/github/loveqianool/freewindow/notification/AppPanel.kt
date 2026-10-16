@@ -38,6 +38,7 @@ class AppPanel(
     private val parkedApps: List<FreeWindowNotification.ParkedApp>,
     private val onAppSelected: (ComponentName) -> Unit,
     private val onParkedSelected: (windowId: Int) -> Unit,
+    private val onParkedClosed: (windowId: Int) -> Unit,
 ) {
 
     private data class AppEntry(
@@ -108,16 +109,24 @@ class AppPanel(
         }
         root.addView(scroll)
 
-        // Section 1: parked windows.
+        // Section 1: parked/maximized windows.
         if (parkedApps.isNotEmpty()) {
             listContainer.addView(sectionHeader("后台"))
             parkedApps.forEach { app ->
                 listContainer.addView(
-                    simpleRow(app.label) {
-                        Log.i(TAG, "panel: parked selected window=${app.windowId}")
-                        onParkedSelected(app.windowId)
-                        dismiss()
-                    },
+                    parkedRow(
+                        app,
+                        onSelect = {
+                            Log.i(TAG, "panel: parked selected window=${app.windowId}")
+                            onParkedSelected(app.windowId)
+                            dismiss()
+                        },
+                        onClose = {
+                            Log.i(TAG, "panel: parked closed window=${app.windowId}")
+                            onParkedClosed(app.windowId)
+                            dismiss()
+                        },
+                    ),
                 )
             }
         }
@@ -311,6 +320,23 @@ class AppPanel(
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         })
         layout.setOnClickListener { onClick() }
+        return layout
+    }
+
+    /** Parked/maximized app row with a ✕ close button. */
+    private fun parkedRow(
+        app: FreeWindowNotification.ParkedApp,
+        onSelect: () -> Unit,
+        onClose: () -> Unit,
+    ): LinearLayout {
+        val layout = simpleRow(app.label, onSelect)
+        // Replace the click with select; add ✕ button for close.
+        layout.addView(TextView(context).apply {
+            text = "✕"
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
+            setPadding(dp(12), dp(4), dp(4), dp(4))
+            setOnClickListener { onClose() }
+        })
         return layout
     }
 

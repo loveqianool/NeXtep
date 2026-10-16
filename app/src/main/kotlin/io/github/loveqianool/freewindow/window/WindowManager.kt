@@ -596,9 +596,13 @@ object WindowManager : WindowHost {
     fun getParkedApps(): List<FreeWindowNotification.ParkedApp> {
         val app = appContext ?: return emptyList()
         return windows.values
-            .filter { it.isParked }
+            .filter { it.isParked || it.isMaximized }
             .map { rec ->
-                FreeWindowNotification.ParkedApp(rec.id, appLabel(app, rec.componentName))
+                FreeWindowNotification.ParkedApp(
+                    rec.id,
+                    appLabel(app, rec.componentName),
+                    rec.isMaximized,
+                )
             }
     }
 
