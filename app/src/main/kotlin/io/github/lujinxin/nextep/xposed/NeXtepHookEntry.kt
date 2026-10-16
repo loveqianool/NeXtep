@@ -44,7 +44,7 @@ class NeXtepHookEntry : XposedModule() {
         if (packageName == "com.android.systemui") {
             if (!EmergencyDisable.isRequested() && FeatureGate.SYSTEM_UI.defaultEnabled) {
                 // Free-window mode: the old workspace takeover UI is retired.
-                FreeWindowSystemUiHook.install(this, param.defaultClassLoader)
+                FreeWindowSystemUiHook.install()
             }
             return
         }

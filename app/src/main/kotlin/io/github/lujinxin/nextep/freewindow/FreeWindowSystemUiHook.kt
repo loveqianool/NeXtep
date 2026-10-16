@@ -10,8 +10,6 @@ import android.view.View
 import android.view.WindowManager
 import android.widget.FrameLayout
 import java.lang.reflect.Proxy
-import io.github.libxposed.api.XposedInterface
-import io.github.libxposed.api.XposedModule
 import io.github.lujinxin.nextep.apps.LauncherAppRepository
 import io.github.lujinxin.nextep.logging.NeXtepLog
 import io.github.lujinxin.nextep.systemui.SystemUiWindowTypeResolver
@@ -20,8 +18,8 @@ import kotlin.math.max
 /**
  * SystemUI-side entry for the free-window mode.
  *
- * Hooks SystemUIApplication.onCreate, adds one fullscreen overlay window
- * (TYPE_PHONE, touchable, not focusable) and hosts inside it:
+ * Waits for the SystemUI Application to exist, then adds one fullscreen
+ * overlay window (TYPE_PHONE, touchable, not focusable) and hosts inside it:
  * [FreeWindowManager] windows, the [FloatingBallView] and the [AppListPanel].
  * The old workspace takeover UI is no longer installed.
  */
@@ -65,29 +63,39 @@ object FreeWindowSystemUiHook {
         }
     }
 
-    fun install(module: XposedModule, classLoader: ClassLoader) {
+    fun install() {
+        // Trigger via polling instead of hooking Application.onCreate: on some
+        // ROMs (LineageOS 24) the concrete SystemUI Application subclass
+        // overrides onCreate and a hook on the base method never fires.
+        // ActivityThread.currentApplication() is a public static that returns
+        // null until the app is created, so polling it on the main thread is
+        // ROM-independent and needs no method hook for the trigger itself.
         runCatching {
-            // Hook the framework Application.onCreate rather than the concrete
-            // SystemUIApplication: the latter is not reliably loadable at this
-            // point on all ROMs (ClassNotFoundException on LineageOS 24), while
-            // android.app.Application is always present. This hook is installed
-            // only in the systemui process, so it still fires exactly once.
-            val appClass = Class.forName("android.app.Application")
-            val onCreate = appClass.getDeclaredMethod("onCreate").apply { isAccessible = true }
-            module.hook(onCreate).intercept(object : XposedInterface.Hooker {
-                override fun intercept(chain: XposedInterface.Chain): Any? {
-                    NeXtepLog.info("freewindow", "Application.onCreate intercepted, proceeding")
-                    val result = chain.proceed()
-                    runCatching { onSystemUiReady(chain.thisObject as? Context) }
-                        .onFailure { error ->
-                            NeXtepLog.warn("freewindow", "Overlay setup failed", error)
-                        }
-                    return result
+            val mainLooper = android.os.Looper.getMainLooper() ?: run {
+                NeXtepLog.warn("freewindow", "No main looper; overlay not installed")
+                return
+            }
+            val handler = android.os.Handler(mainLooper)
+            var attempts = 0
+            fun poll() {
+                if (installed) return
+                val app = runCatching { android.app.ActivityThread.currentApplication() }.getOrNull()
+                if (app != null) {
+                    runCatching { onSystemUiReady(app) }
+                        .onFailure { error -> NeXtepLog.warn("freewindow", "Overlay setup failed", error) }
+                    return
                 }
-            })
-            NeXtepLog.info("freewindow", "Installed SystemUI overlay hook")
+                attempts++
+                if (attempts > 40) {
+                    NeXtepLog.warn("freewindow", "SystemUI Application never appeared; overlay not installed")
+                    return
+                }
+                handler.postDelayed({ poll() }, 250)
+            }
+            handler.post { poll() }
+            NeXtepLog.info("freewindow", "Installed SystemUI overlay trigger (polling)")
         }.onFailure { error ->
-            NeXtepLog.warn("freewindow", "Failed to install overlay hook", error)
+            NeXtepLog.warn("freewindow", "Failed to install overlay trigger", error)
         }
     }
 
