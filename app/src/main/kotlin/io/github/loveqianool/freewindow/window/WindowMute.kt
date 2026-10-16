@@ -3,34 +3,36 @@ package io.github.loveqianool.freewindow.window
 import io.github.loveqianool.freewindow.FwLog
 
 /**
- * Per-window mute via `appops set` as root.
- * Runs in systemui; no system_server component needed.
+ * Per-window mute via broadcast to system_server.
+ * See [setMuted] for the Vector caching caveat.
  */
 object WindowMute {
     private const val TAG = "FreeWindow"
 
-    /**
-     * Mutes via `appops set` as root. Runs in systemui; no system_server
-     * component needed (avoids the Vector module-reload issue).
-     * Executed on a bg thread; never block the UI.
-     */
-    fun setMuted(packageName: String, uid: Int, muted: Boolean) {
-        Thread {
-            try {
-                val mode = if (muted) "ignore" else "allow"
-                val proc = Runtime.getRuntime()
-                    .exec(arrayOf("su", "-c", "appops set $packageName PLAY_AUDIO $mode"))
-                val exit = proc.waitFor()
-                FwLog.i("WindowMute: appops set $packageName PLAY_AUDIO $mode exit=$exit")
-            } catch (e: Throwable) {
-                FwLog.w("WindowMute: appops failed", e)
-            }
-        }.start()
-    }
-
-    // Legacy broadcast API (unused, kept for reference).
+    /** Broadcast action for mute requests (handled in system_server). */
     const val ACTION_MUTE = "io.github.loveqianool.freewindow.action.MUTE"
     const val EXTRA_PACKAGE = "package"
     const val EXTRA_UID = "uid"
     const val EXTRA_MUTED = "muted"
-}
+
+    /**
+     * Sends a mute request to system_server (which holds MANAGE_APP_OPS_MODES).
+     * The actual AppOps call happens in ServerHook's receiver.
+     *
+     * NOTE: Requires the system_server to run the new module code. If Vector
+     * caches the old dex, the receiver won't exist and mute will silently fail.
+     * Workaround: full reboot after APK update (not just `stop; start`).
+     */
+    fun setMuted(context: android.content.Context, packageName: String, uid: Int, muted: Boolean) {
+        try {
+            val intent = android.content.Intent(ACTION_MUTE).apply {
+                putExtra(EXTRA_PACKAGE, packageName)
+                putExtra(EXTRA_UID, uid)
+                putExtra(EXTRA_MUTED, muted)
+            }
+            context.sendBroadcast(intent)
+            FwLog.i("WindowMute: broadcast muted=$muted uid=$uid package=$packageName")
+        } catch (e: Throwable) {
+            FwLog.w("WindowMute: broadcast failed", e)
+        }
+    }
