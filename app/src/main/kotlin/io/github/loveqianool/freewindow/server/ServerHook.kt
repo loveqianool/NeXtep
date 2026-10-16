@@ -165,10 +165,10 @@ object ServerHook {
             val stub = Class.forName("com.android.internal.app.IAppOpsService\$Stub")
             val appOps = stub.getMethod("asInterface", android.os.IBinder::class.java)
                 .invoke(null, binder) ?: return
-            // MODE_DEFAULT (3) clears our override and restores system default,
-            // instead of leaving a persistent explicit MODE_ALLOWED.
+            // MODE_ALLOWED explicitly restores sound. (MODE_DEFAULT was tried;
+            // on this device "default" still mutes, so we use explicit allow.)
             val mode = if (muted) android.app.AppOpsManager.MODE_IGNORED
-                       else android.app.AppOpsManager.MODE_DEFAULT
+                       else android.app.AppOpsManager.MODE_ALLOWED
             appOps.javaClass.getMethod(
                 "setMode",
                 Int::class.javaPrimitiveType, Int::class.javaPrimitiveType,
