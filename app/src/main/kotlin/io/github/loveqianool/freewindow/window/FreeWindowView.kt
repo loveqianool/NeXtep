@@ -52,11 +52,6 @@ class FreeWindowView @JvmOverloads constructor(
 
     private var resizeHandleView: View? = null
 
-    companion object {
-        /** Title bar height in dp; content height = window height - this. */
-        const val TITLE_BAR_DP = 44
-    }
-
     private val resizeHandler = ResizeHandler(
         context,
         context.getSystemService(Context.WINDOW_SERVICE) as android.view.WindowManager,
@@ -228,5 +223,8 @@ class FreeWindowView @JvmOverloads constructor(
 
     companion object {
         private const val TAG = "FreeWindow"
+
+        /** Title bar height in dp; content height = window height - this. */
+        const val TITLE_BAR_DP = 44
     }
 }

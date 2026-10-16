@@ -43,8 +43,13 @@ class AppPanel(
     private data class AppEntry(
         val component: ComponentName,
         val label: String,
-        val icon: Drawable,
+        val resolveInfo: android.content.pm.ResolveInfo,
     )
+
+    /** LRU cache for app icons; avoids re-decoding on every panel open. */
+    private val iconCache = object : android.util.LruCache<ComponentName, Drawable>(64) {
+        override fun sizeOf(key: ComponentName, value: Drawable): Int = 1
+    }
 
     private var dialog: Dialog? = null
     private var appRows: LinearLayout? = null
@@ -108,7 +113,7 @@ class AppPanel(
             listContainer.addView(sectionHeader("后台"))
             parkedApps.forEach { app ->
                 listContainer.addView(
-                    row(label = app.label, icon = null) {
+                    simpleRow(app.label) {
                         Log.i(TAG, "panel: parked selected window=${app.windowId}")
                         onParkedSelected(app.windowId)
                         dismiss()
@@ -184,13 +189,37 @@ class AppPanel(
                     AppEntry(
                         ComponentName(ai.packageName, ai.name),
                         ri.loadLabel(pm).toString(),
-                        ri.loadIcon(pm),
+                        ri, // Icon loaded lazily in row()
                     )
                 }
                 .sortedBy { it.label.lowercase() }
         } catch (e: Exception) {
             Log.i(TAG, "query apps failed: ${e.message}")
             emptyList()
+        }
+    }
+
+    /** Loads the icon for [entry] on a bg thread, then sets it on [imageView]. */
+    private fun loadIconAsync(entry: AppEntry, imageView: ImageView) {
+        val cached = iconCache.get(entry.component)
+        if (cached != null) {
+            imageView.setImageDrawable(cached)
+            return
+        }
+        // Tag guards against recycled views (not a RecyclerView, but cheap).
+        imageView.tag = entry.component
+        bgExecutor.execute {
+            val icon = try {
+                entry.resolveInfo.loadIcon(context.packageManager)
+            } catch (e: Throwable) {
+                null
+            } ?: return@execute
+            iconCache.put(entry.component, icon)
+            mainHandler.post {
+                if (imageView.tag == entry.component) {
+                    imageView.setImageDrawable(icon)
+                }
+            }
         }
     }
 
@@ -210,7 +239,7 @@ class AppPanel(
         }
         filtered.forEach { app ->
             rows.addView(
-                row(label = app.label, icon = app.icon) {
+                row(app) {
                     Log.i(TAG, "panel: app selected ${app.component.flattenToShortString()}")
                     onAppSelected(app.component)
                     dismiss()
@@ -226,7 +255,7 @@ class AppPanel(
             setPadding(dp(4), dp(12), dp(4), dp(4))
         }
 
-    private fun row(label: String, icon: Drawable?, onClick: () -> Unit): LinearLayout {
+    private fun row(app: AppEntry, onClick: () -> Unit): LinearLayout {
         val layout = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -242,13 +271,39 @@ class AppPanel(
                 setBackgroundResource(out.resourceId)
             }
         }
-        if (icon != null) {
-            layout.addView(ImageView(context).apply {
-                setImageDrawable(icon)
-                layoutParams = LinearLayout.LayoutParams(dp(40), dp(40)).apply {
-                    marginEnd = dp(12)
-                }
-            })
+        // Icon loads async; placeholder until ready.
+        val iconView = ImageView(context).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(40), dp(40)).apply {
+                marginEnd = dp(12)
+            }
+        }
+        layout.addView(iconView)
+        loadIconAsync(app, iconView)
+        layout.addView(TextView(context).apply {
+            text = app.label
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        })
+        layout.setOnClickListener { onClick() }
+        return layout
+    }
+
+    /** Simple text row (for parked apps, no icon). */
+    private fun simpleRow(label: String, onClick: () -> Unit): LinearLayout {
+        val layout = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(8), dp(10), dp(8), dp(10))
+            isClickable = true
+            isFocusable = true
+            layoutParams = ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            )
+            val out = TypedValue()
+            if (context.theme.resolveAttribute(android.R.attr.selectableItemBackground, out, true)) {
+                setBackgroundResource(out.resourceId)
+            }
         }
         layout.addView(TextView(context).apply {
             text = label
