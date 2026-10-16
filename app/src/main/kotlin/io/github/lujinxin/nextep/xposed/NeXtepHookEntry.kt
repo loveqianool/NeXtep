@@ -2,8 +2,6 @@ package io.github.lujinxin.nextep.xposed
 
 import android.util.Log
 import io.github.lujinxin.nextep.logging.NeXtepLog
-import io.github.lujinxin.nextep.launcher.ColorOsLauncherHook
-import io.github.lujinxin.nextep.multiapp.OplusMultiAppHook
 import io.github.lujinxin.nextep.freewindow.FreeWindowSystemUiHook
 import io.github.lujinxin.nextep.safety.EmergencyDisable
 import io.github.lujinxin.nextep.safety.FeatureGate
@@ -53,18 +51,5 @@ class NeXtepHookEntry : XposedModule() {
         if (packageName == "io.github.loveqianool.nextep") {
             return
         }
-
-        if (packageName == "com.oplus.multiapp") {
-            if (!EmergencyDisable.isRequested() &&
-                FeatureGate.LAUNCHER_TRANSFORM.defaultEnabled
-            ) {
-                OplusMultiAppHook.install(this, param.defaultClassLoader)
-            }
-            return
-        }
-
-        if (EmergencyDisable.isRequested() || !FeatureGate.LAUNCHER_TRANSFORM.defaultEnabled) return
-
-        ColorOsLauncherHook.install(this, packageName, param.defaultClassLoader)
     }
 }
