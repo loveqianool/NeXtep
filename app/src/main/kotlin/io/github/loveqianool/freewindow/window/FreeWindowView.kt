@@ -46,6 +46,8 @@ class FreeWindowView @JvmOverloads constructor(
     /** Armed by tapping the resize area; next tap on top-left toggles title bar. */
     private var titleToggleArmed = false
 
+    private var isMaximized = false
+
     private var resizeHandleView: View? = null
 
     private val resizeHandler = ResizeHandler(
@@ -126,12 +128,16 @@ class FreeWindowView @JvmOverloads constructor(
         )
 
         // Top-left tap area for title-bar toggle (second tap of the gesture).
-        // Only active when titleToggleArmed (after tapping resize area).
+        // Top-left tap area for title-bar toggle.
+        // - Maximized: single tap toggles (no resize handle to arm with).
+        // - Windowed: requires the two-tap gesture (resize area first).
         val toggleSize = (48 * resources.displayMetrics.density).toInt()
         val toggleView = View(context).apply {
             isClickable = true
             setOnClickListener {
-                if (titleToggleArmed) {
+                if (isMaximized) {
+                    toggleTitleBar()
+                } else if (titleToggleArmed) {
                     titleToggleArmed = false
                     toggleTitleBar()
                 }
@@ -166,6 +172,7 @@ class FreeWindowView @JvmOverloads constructor(
     fun setMuted(muted: Boolean) = titleBar.setMuted(muted)
 
     fun setMaximized(maximized: Boolean) {
+        isMaximized = maximized
         titleBar.setMaximized(maximized)
         titleBar.visibility = if (maximized) View.GONE else View.VISIBLE
         // No resize handle in maximized mode.
