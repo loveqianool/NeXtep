@@ -52,26 +52,59 @@ class FreeWindowView @JvmOverloads constructor(
 
     private var resizeHandleView: View? = null
 
-    /** Ensures touch events are forwarded in order (DOWN before MOVE/UP). */
-    private var lastForwardAt = 0L
     private val touchHandler = android.os.Handler(android.os.Looper.getMainLooper())
 
     /**
-     * Forwards a touch event after [extraDelay] ms, ensuring it is not
-     * delivered before any previously queued event. The framework owns
-     * [event] (pooled); we forward a copy.
+     * Gate for the first DOWN after the window becomes focusable. The system
+     * takes an unpredictable time to grant window focus after we clear
+     * NOT_FOCUSABLE; forwarding DOWN before focus arrives races the IME
+     * (keyboard shows then gets dismissed). We hold touches until
+     * onWindowFocusChanged(true), with a timeout fallback.
      */
-    private fun forwardOrdered(event: android.view.MotionEvent, did: Int, extraDelay: Long) {
+    private val pendingTouches = ArrayList<Pair<android.view.MotionEvent, Int>>()
+    private var gateOpen = true
+    private var gateStart = 0L
+    private val openGateRunnable = Runnable { openGate() }
+
+    private fun closeGate() {
+        gateOpen = false
+        gateStart = android.os.SystemClock.uptimeMillis()
+        touchHandler.removeCallbacks(openGateRunnable)
+        touchHandler.postDelayed(openGateRunnable, 400) // timeout fallback
+    }
+
+    private fun openGate() {
+        touchHandler.removeCallbacks(openGateRunnable)
+        if (gateOpen) return
+        gateOpen = true
+        pendingTouches.forEach { (e, d) ->
+            TouchForwarder.forward(e, d)
+            e.recycle()
+        }
+        pendingTouches.clear()
+    }
+
+    private fun enqueueTouch(event: android.view.MotionEvent, did: Int) {
         val copy = android.view.MotionEvent.obtain(event)
-        val at = maxOf(
-            android.os.SystemClock.uptimeMillis() + extraDelay,
-            lastForwardAt,
-        )
-        lastForwardAt = at
-        touchHandler.postAtTime({
+        if (gateOpen) {
             TouchForwarder.forward(copy, did)
             copy.recycle()
-        }, at)
+        } else {
+            pendingTouches.add(copy to did)
+        }
+    }
+
+    override fun onWindowFocusChanged(hasWindowFocus: Boolean) {
+        super.onWindowFocusChanged(hasWindowFocus)
+        if (hasWindowFocus && !gateOpen) {
+            android.util.Log.i(
+                "FreeWindow",
+                "focus gained after ${android.os.SystemClock.uptimeMillis() - gateStart}ms",
+            )
+            touchHandler.removeCallbacks(openGateRunnable)
+            // Give the IME a moment to process the focus before the DOWN arrives.
+            touchHandler.postDelayed(openGateRunnable, 40)
+        }
     }
 
     private val resizeHandler = ResizeHandler(
@@ -135,20 +168,15 @@ class FreeWindowView @JvmOverloads constructor(
         textureView.setOnTouchListener { _, event ->
             val did = displayId
             if (event.actionMasked == MotionEvent.ACTION_DOWN) {
-                // Delay DOWN: updateViewLayout (focusable) is async; the app
-                // requests the IME on DOWN, which needs the window to already
-                // be focusable. Only delay when actually transitioning to
-                // focusable; otherwise the tap feels laggy.
-                val needDelay = !ImeHelper.isFocusable(this@FreeWindowView)
+                // If the window wasn't focusable (or doesn't have focus yet),
+                // hold touches until onWindowFocusChanged(true) so the DOWN
+                // doesn't race the IME.
+                val needGate = !ImeHelper.isFocusable(this@FreeWindowView) || !hasWindowFocus()
                 ImeHelper.setFocusable(this@FreeWindowView, true)
                 host.onTap(windowId)
-                if (did >= 0) {
-                    forwardOrdered(event, did, if (needDelay) 233L else 0L)
-                }
-            } else if (did >= 0) {
-                // MOVE/UP must not overtake the delayed DOWN; queue them in order.
-                forwardOrdered(event, did, 0L)
+                if (needGate) closeGate()
             }
+            if (did >= 0) enqueueTouch(event, did)
             true
         }
         contentLayout.addView(textureView)

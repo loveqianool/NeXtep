@@ -539,6 +539,11 @@ object WindowManager : WindowHost {
             x = rect.left
             y = rect.top
             title = "FreeWindow"
+            // Don't let focus changes show/hide the IME or pan the window;
+            // the IME is requested by the app on the VirtualDisplay.
+            softInputMode =
+                AndroidWindowManager.LayoutParams.SOFT_INPUT_STATE_UNCHANGED or
+                AndroidWindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING
         }
     }
 
