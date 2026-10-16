@@ -7,8 +7,6 @@ import android.util.Log
  * See [setMuted] for the Vector caching caveat.
  */
 object WindowMute {
-    private const val TAG = "FreeWindow"
-
     /** Broadcast action for mute requests (handled in system_server). */
     const val ACTION_MUTE = "io.github.loveqianool.freewindow.action.MUTE"
     const val EXTRA_PACKAGE = "package"
