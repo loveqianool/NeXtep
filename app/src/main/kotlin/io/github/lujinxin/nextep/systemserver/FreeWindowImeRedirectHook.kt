@@ -21,17 +21,20 @@ internal object FreeWindowImeRedirectHook {
             val immsClass: Class<*> = candidates.firstNotNullOf { name ->
                 runCatching { classLoader.loadClass(name) }.getOrNull()
             }
-            val methods = immsClass.declaredMethods.filter { it.name == "showSoftInput" }
+            val methods = immsClass.declaredMethods.filter {
+                it.name == "showSoftInput" || it.name == "startInput"
+            }
             check(methods.isNotEmpty()) {
-                "showSoftInput not found; have: " +
+                "showSoftInput/startInput not found; have: " +
                     immsClass.declaredMethods.map { it.name }.distinct().sorted().take(30).joinToString(",")
             }
             methods.forEach { method ->
                 method.isAccessible = true
+                val methodName = method.name
                 module.hook(method).intercept(object : XposedInterface.Hooker {
                     override fun intercept(chain: XposedInterface.Chain): Any? {
                         // Operation-time log: proves the hook is installed and the method is hit.
-                        NeXtepLog.info("freewindow_ime", "showSoftInput called")
+                        NeXtepLog.info("freewindow_ime", "$methodName called")
                         return chain.proceed()
                     }
                 })
