@@ -158,7 +158,6 @@ object WindowManager : WindowHost {
             Log.i(TAG, "setMuted id=$id: uid lookup failed for $pkg")
             return
         }
-        val app = appContext ?: return
         WindowMute.setMuted(app, pkg, uid, muted)
         windows[id] = rec.copy(isMuted = muted)
         rec.view.setMuted(muted)
