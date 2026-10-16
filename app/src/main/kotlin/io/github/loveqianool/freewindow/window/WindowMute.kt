@@ -36,3 +36,4 @@ object WindowMute {
             FwLog.w("WindowMute: broadcast failed", e)
         }
     }
+}
