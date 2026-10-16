@@ -240,7 +240,9 @@ object FreeWindowSystemUiHook {
         }
 
         val panelHost = object : AppListPanelHost {
-            override fun runningWindows(): List<FreeWindowState> = manager.windows()
+            // Only parked (hidden) windows are listed; tap restores them.
+            override fun runningWindows(): List<FreeWindowState> =
+                manager.windows().filter { it.mode == FreeWindowMode.PARKED }
 
             override fun curatedApps(query: String): List<AppEntryLite> {
                 val all = runCatching {
@@ -252,17 +254,8 @@ object FreeWindowSystemUiHook {
             }
 
             override fun onWindowRowTap(windowId: Int) {
-                manager.bringToFront(windowId)
+                manager.unparkWindow(windowId)
                 hidePanel()
-            }
-
-            override fun onWindowRowLongPress(windowId: Int) {
-                val state = manager.windows().firstOrNull { it.windowId == windowId } ?: return
-                if (state.mode == FreeWindowMode.MAXIMIZED) {
-                    manager.restoreWindowed(windowId)
-                } else {
-                    manager.closeWindow(windowId)
-                }
             }
 
             override fun onAppTap(entry: AppEntryLite) {

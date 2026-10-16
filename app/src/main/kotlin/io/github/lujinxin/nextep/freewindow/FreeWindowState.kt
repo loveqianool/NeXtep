@@ -60,10 +60,10 @@ interface FloatingBallHost {
 }
 
 interface AppListPanelHost {
+    /** Parked (hidden) windows, for one-tap restore. */
     fun runningWindows(): List<FreeWindowState>
     fun curatedApps(query: String): List<AppEntryLite>
     fun onWindowRowTap(windowId: Int)
-    fun onWindowRowLongPress(windowId: Int)
     fun onAppTap(entry: AppEntryLite)
     fun onPanelClose()
 }

@@ -17,12 +17,9 @@ import android.widget.TextView
 
 /**
  * App list panel expanded from the floating ball.
- *
- * Top section lists running free windows (with mode/mute badges); bottom
- * section lists curated apps filtered by the search box. Host callbacks:
- * [AppListPanelHost.onWindowRowTap] restores a parked window or brings a
- * windowed/maximized one to front, [AppListPanelHost.onWindowRowLongPress]
- * demotes a maximized window back to windowed mode.
+ * Top section lists parked (background) windows; bottom section lists curated
+ * apps filtered by the search box. Host callbacks:
+ * [AppListPanelHost.onWindowRowTap] restores a parked window.
  */
 class AppListPanel(context: Context, private val host: AppListPanelHost) : FrameLayout(context) {
 
@@ -99,7 +96,7 @@ class AppListPanel(context: Context, private val host: AppListPanelHost) : Frame
         })
 
         // Running-windows section.
-        column.addView(sectionLabel("运行中"))
+        column.addView(sectionLabel("后台"))
         runningContainer = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
         }
@@ -130,7 +127,7 @@ class AppListPanel(context: Context, private val host: AppListPanelHost) : Frame
         val windows = host.runningWindows()
         if (windows.isEmpty()) {
             runningContainer.addView(TextView(context).apply {
-                text = "暂无运行中的窗口"
+                text = "暂无后台窗口"
                 setTextColor(0xFF777777.toInt())
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
                 gravity = Gravity.CENTER
@@ -139,8 +136,6 @@ class AppListPanel(context: Context, private val host: AppListPanelHost) : Frame
         } else {
             for (state in windows) {
                 val badge = buildList {
-                    if (state.mode == FreeWindowMode.PARKED) add("后台")
-                    if (state.mode == FreeWindowMode.MAXIMIZED) add("最大化")
                     if (state.muted) add("🔇")
                 }.joinToString(" · ")
                 val row = makeRow(
@@ -149,10 +144,6 @@ class AppListPanel(context: Context, private val host: AppListPanelHost) : Frame
                     badge = badge,
                 )
                 row.setOnClickListener { host.onWindowRowTap(state.windowId) }
-                row.setOnLongClickListener {
-                    host.onWindowRowLongPress(state.windowId)
-                    true
-                }
                 runningContainer.addView(row)
             }
         }
