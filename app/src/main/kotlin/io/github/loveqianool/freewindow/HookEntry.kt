@@ -16,7 +16,7 @@ class HookEntry : XposedModule() {
     override fun onPackageLoaded(param: PackageLoadedParam) {
         if (!param.isFirstPackage) return
         if (param.packageName == "com.android.systemui") {
-            Log.i("systemui loaded")
+            Log.i(TAG, "systemui loaded")
             WindowSystemUiHook.install()
         }
     }
