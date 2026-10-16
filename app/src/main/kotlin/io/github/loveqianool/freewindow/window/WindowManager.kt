@@ -401,18 +401,26 @@ object WindowManager : WindowHost {
             val atm = Class.forName("android.app.ActivityTaskManager")
             val service = atm.getDeclaredMethod("getService")
                 .apply { isAccessible = true }
-                .invoke(null) ?: return false
+                .invoke(null) ?: run {
+                    Log.i(TAG, "moveTaskToDisplay: getService returned null")
+                    return false
+                }
             val method = service.javaClass.declaredMethods.firstOrNull {
                 (it.name == "moveRootTaskToDisplay" || it.name == "moveTaskToDisplay") &&
                     it.parameterTypes.size == 2 &&
                     it.parameterTypes[0] == Int::class.javaPrimitiveType
-            } ?: return false
+            } ?: run {
+                Log.i(TAG, "moveTaskToDisplay: method not found")
+                return false
+            }
             method.isAccessible = true
+            Log.i(TAG, "moveTaskToDisplay: invoking ${method.name} task=$taskId display=$displayId")
             method.invoke(service, taskId, displayId)
             Log.i(TAG, "moveTaskToDisplay task=$taskId display=$displayId via ${method.name}")
             true
         } catch (e: Throwable) {
-            Log.i(TAG, "moveTaskToDisplay failed: ${e.message}")
+            Log.i(TAG, "moveTaskToDisplay failed: ${e.javaClass.simpleName}: ${e.message}")
+            e.cause?.let { Log.i(TAG, "  caused by: ${it.javaClass.simpleName}: ${it.message}") }
             false
         }
     }
