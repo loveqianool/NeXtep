@@ -428,7 +428,7 @@ class FreeWindowManager(
                 background = GradientDrawable().apply {
                     shape = GradientDrawable.RECTANGLE
                     setColor(Color.TRANSPARENT)
-                    setStroke(dp(2), Color.WHITE, dp(8).toFloat(), dp(4).toFloat())
+                    setStroke(dp(3), 0xFF00E5FF.toInt(), dp(10).toFloat(), dp(5).toFloat())
                 }
             }
             resizePreview = v

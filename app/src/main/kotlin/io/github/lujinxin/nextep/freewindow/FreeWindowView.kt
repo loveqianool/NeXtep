@@ -207,14 +207,11 @@ class FreeWindowView(
         addView(textureView)
         addView(titleBar)
 
+        // Invisible resize grab area (bottom-right). No visible dot; the
+        // dashed preview shows while dragging.
         val resizeHandle = View(context).apply {
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(0x88FFFFFF.toInt())
-            }
-            layoutParams = LayoutParams(dp(28), dp(28), Gravity.BOTTOM or Gravity.END).apply {
-                setMargins(dp(4), dp(4), dp(4), dp(4))
-            }
+            setBackgroundColor(Color.TRANSPARENT)
+            layoutParams = LayoutParams(dp(36), dp(36), Gravity.BOTTOM or Gravity.END)
             setOnTouchListener(resizeTouchListener)
         }
         addView(resizeHandle)
