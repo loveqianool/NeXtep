@@ -218,7 +218,8 @@ object WindowManager : WindowHost {
             Log.i(TAG, "onResizeCommit: wm is NULL!")
         } else {
             wmRef.updateViewLayout(rec.view, params)
-            Log.i(TAG, "onResizeCommit: updateViewLayout called")
+            rec.view.requestLayout()
+            Log.i(TAG, "onResizeCommit: updateViewLayout called, view=${rec.view.width}x${rec.view.height}")
         }
         pendingResize[id] = true
     }
