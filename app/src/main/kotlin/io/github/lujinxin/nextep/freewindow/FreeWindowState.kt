@@ -53,6 +53,7 @@ interface FloatingBallHost {
     fun onBallMove(dx: Int, dy: Int)
     fun onBallTap()
     fun onBallRelease()
+    fun onBallLongPress()
 }
 
 interface AppListPanelHost {

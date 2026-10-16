@@ -66,12 +66,15 @@ class FloatingBallView(context: Context, private val host: FloatingBallHost) : F
                     lastRawX = event.rawX
                     lastRawY = event.rawY
                     dragging = false
+                    longPressFired = false
+                    longPressHandler.postDelayed(longPressRunnable, 600)
                 }
                 MotionEvent.ACTION_MOVE -> {
                     val totalDx = event.rawX - downRawX
                     val totalDy = event.rawY - downRawY
                     if (!dragging && Math.hypot(totalDx.toDouble(), totalDy.toDouble()) > dp(8)) {
                         dragging = true
+                        longPressHandler.removeCallbacks(longPressRunnable)
                     }
                     if (dragging) {
                         host.onBallMove(
@@ -83,7 +86,8 @@ class FloatingBallView(context: Context, private val host: FloatingBallHost) : F
                     }
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    if (event.actionMasked == MotionEvent.ACTION_UP && !dragging) {
+                    longPressHandler.removeCallbacks(longPressRunnable)
+                    if (event.actionMasked == MotionEvent.ACTION_UP && !dragging && !longPressFired) {
                         host.onBallTap()
                     }
                     host.onBallRelease()
@@ -91,6 +95,13 @@ class FloatingBallView(context: Context, private val host: FloatingBallHost) : F
             }
             true
         }
+    }
+
+    private val longPressHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private var longPressFired = false
+    private val longPressRunnable = Runnable {
+        longPressFired = true
+        host.onBallLongPress()
     }
 
     /** Badge shows [n]; hidden when n == 0. */

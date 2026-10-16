@@ -201,6 +201,12 @@ class FreeWindowManager(
         notifyChanged()
     }
 
+    /** Release everything: close all windows, release displays. Used for overlay exit. */
+    fun shutdown() {
+        records.toList().forEach { closeWindow(it.state.windowId) }
+        listener = null
+    }
+
     /**
      * Park a window: the task STAYS on its VirtualDisplay, resumed and still
      * rendering, so the app keeps believing it is in the foreground. Only the

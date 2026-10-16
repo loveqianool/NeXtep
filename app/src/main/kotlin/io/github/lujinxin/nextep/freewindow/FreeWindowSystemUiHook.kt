@@ -30,6 +30,7 @@ object FreeWindowSystemUiHook {
     private const val TOUCHABLE_INSETS_REGION = 3
 
     private fun installTouchableRegion(container: FrameLayout, regionOf: () -> Region) {
+        var insetsFired = false
         runCatching {
             val listenerClass =
                 Class.forName("android.view.ViewTreeObserver\$OnComputeInternalInsetsListener")
@@ -47,6 +48,10 @@ object FreeWindowSystemUiHook {
                             val region =
                                 info.javaClass.getField("touchableRegion").get(info) as Region
                             region.set(regionOf())
+                            if (!insetsFired) {
+                                insetsFired = true
+                                NeXtepLog.info("freewindow", "onComputeInternalInsets fired, region=$region")
+                            }
                         }.onFailure { error ->
                             NeXtepLog.warn("freewindow", "Insets compute failed", error)
                         }
@@ -212,6 +217,17 @@ object FreeWindowSystemUiHook {
             setWindowFocusable(false)
         }
 
+        /** User-requested exit: tear the overlay down completely. */
+        fun exitOverlay() {
+            NeXtepLog.info("freewindow", "Exiting overlay by user request")
+            runCatching { manager.shutdown() }
+            runCatching { windowManager.removeViewImmediate(container) }
+            installed = false
+            runCatching {
+                android.widget.Toast.makeText(appContext, "FreeWindow 已退出", android.widget.Toast.LENGTH_SHORT).show()
+            }
+        }
+
         fun showPanel() {
             val panel = panelRef ?: return
             positionPanel()
@@ -244,6 +260,10 @@ object FreeWindowSystemUiHook {
             override fun onBallTap() {
                 val panel = panelRef ?: return
                 if (panel.visibility == View.VISIBLE) hidePanel() else showPanel()
+            }
+
+            override fun onBallLongPress() {
+                exitOverlay()
             }
 
             override fun onBallRelease() {
