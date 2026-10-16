@@ -279,9 +279,19 @@ object WindowManager : WindowHost {
         // kills the task (Unknown rootTaskId).
         val oldVd = displays[id]
         val oldTaskId = rec.taskId
+        // If the size changed (resize/maximize), the moved task won't re-layout;
+        // relaunch instead. Only move when the size is the same (surface recreate).
+        val oldW = oldVd?.display?.let { d ->
+            runCatching {
+                val metrics = android.util.DisplayMetrics()
+                d.getRealMetrics(metrics)
+                metrics.widthPixels
+            }.getOrNull()
+        } ?: -1
         surfaces[id]?.let { runCatching { it.release() } }
         surfaces[id] = surface
         val rect = currentRect(rec.view)
+        val sizeChanged = oldW > 0 && oldW != rect.width()
         val vd = displayEngine?.create(
             id, rect.width(), rect.height(), densityDpi(app), surface,
             releaseFirst = false,
@@ -296,18 +306,16 @@ object WindowManager : WindowHost {
         rec.view.displayId = newDisplayId
         windows[id] = rec.copy(displayId = newDisplayId)
         var moved = false
-        if (oldTaskId >= 0) {
+        if (!sizeChanged && oldTaskId >= 0) {
             moved = moveTaskToDisplay(oldTaskId, newDisplayId)
             if (moved) {
                 Log.i(TAG, "rebuildDisplay id=$id moved task=$oldTaskId to display=$newDisplayId")
             }
+        } else if (sizeChanged) {
+            Log.i(TAG, "rebuildDisplay id=$id size changed, relaunching instead of move")
         }
         // Now safe to release the old display; the task is gone from it.
         oldVd?.let { runCatching { it.release() } }
-        // Also release via engine to clear its map (it still holds the old).
-        // Actually engine.create with releaseFirst=false left the old in its
-        // map; overwrite is already done by displays[id]=vd above, but the
-        // engine's internal map needs the old released.
         if (!moved) {
             Log.i(TAG, "rebuildDisplay id=$id: move failed, relaunching")
             launchOnDisplay(app, rec.componentName, newDisplayId)
