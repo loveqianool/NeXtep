@@ -2,7 +2,7 @@ name: Build APK
 
 on:
   push:
-    branches: [freewindow-rewrite]
+    branches: [main]
     tags: ["v*"]
   workflow_dispatch:
 
