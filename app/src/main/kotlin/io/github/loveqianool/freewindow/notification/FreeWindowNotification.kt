@@ -27,7 +27,6 @@ object FreeWindowNotification {
 
     const val ACTION_SHOW_PANEL = "io.github.loveqianool.freewindow.SHOW_PANEL"
     const val ACTION_UNPARK = "io.github.loveqianool.freewindow.UNPARK"
-    const val ACTION_CLOSE = "io.github.loveqianool.freewindow.CLOSE"
     const val ACTION_EXIT = "io.github.loveqianool.freewindow.EXIT"
 
     const val EXTRA_WINDOW_ID = "io.github.loveqianool.freewindow.extra.WINDOW_ID"
@@ -46,7 +45,6 @@ object FreeWindowNotification {
     interface Listener {
         fun onShowPanel()
         fun onUnpark(windowId: Int)
-        fun onClose(windowId: Int)
         fun onExit()
     }
 
@@ -63,11 +61,6 @@ object FreeWindowNotification {
                     val windowId = intent.getIntExtra(EXTRA_WINDOW_ID, -1)
                     Log.i(TAG, "notification: unpark window=$windowId")
                     if (windowId >= 0) listener?.onUnpark(windowId)
-                }
-                ACTION_CLOSE -> {
-                    val windowId = intent.getIntExtra(EXTRA_WINDOW_ID, -1)
-                    Log.i(TAG, "notification: close window=$windowId")
-                    if (windowId >= 0) listener?.onClose(windowId)
                 }
                 ACTION_EXIT -> {
                     Log.i(TAG, "notification: exit")
@@ -146,16 +139,6 @@ object FreeWindowNotification {
                     },
                 ).build(),
             )
-            // "关闭" closes the window.
-            builder.addAction(
-                Notification.Action.Builder(
-                    null,
-                    "关闭",
-                    broadcastIntent(context, ACTION_CLOSE, requestCode = 200 + app.windowId) {
-                        putExtra(EXTRA_WINDOW_ID, app.windowId)
-                    },
-                ).build(),
-            )
         }
 
         builder.addAction(
@@ -208,7 +191,6 @@ object FreeWindowNotification {
         val filter = IntentFilter().apply {
             addAction(ACTION_SHOW_PANEL)
             addAction(ACTION_UNPARK)
-            addAction(ACTION_CLOSE)
             addAction(ACTION_EXIT)
         }
         context.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)

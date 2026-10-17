@@ -38,6 +38,7 @@ class AppPanel(
     private val parkedApps: List<FreeWindowNotification.ParkedApp>,
     private val onAppSelected: (ComponentName) -> Unit,
     private val onParkedSelected: (windowId: Int) -> Unit,
+    private val onParkedMaximized: (windowId: Int) -> Unit,
     private val onParkedClosed: (windowId: Int) -> Unit,
 ) {
 
@@ -119,6 +120,11 @@ class AppPanel(
                         onSelect = {
                             Log.i(TAG, "panel: parked selected window=${app.windowId}")
                             onParkedSelected(app.windowId)
+                            dismiss()
+                        },
+                        onMaximize = {
+                            Log.i(TAG, "panel: parked maximized window=${app.windowId}")
+                            onParkedMaximized(app.windowId)
                             dismiss()
                         },
                         onClose = {
@@ -323,14 +329,24 @@ class AppPanel(
         return layout
     }
 
-    /** Parked/maximized app row with a ✕ close button. */
+    /** Parked/maximized app row with maximize and ✕ buttons. */
     private fun parkedRow(
         app: FreeWindowNotification.ParkedApp,
         onSelect: () -> Unit,
+        onMaximize: () -> Unit,
         onClose: () -> Unit,
     ): LinearLayout {
         val layout = simpleRow(app.label, onSelect)
-        // Replace the click with select; add ✕ button for close.
+        // Maximize button (only show if not already maximized).
+        if (!app.isMaximized) {
+            layout.addView(TextView(context).apply {
+                text = "最大化"
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+                setPadding(dp(12), dp(4), dp(4), dp(4))
+                setOnClickListener { onMaximize() }
+            })
+        }
+        // ✕ button for close.
         layout.addView(TextView(context).apply {
             text = "✕"
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)

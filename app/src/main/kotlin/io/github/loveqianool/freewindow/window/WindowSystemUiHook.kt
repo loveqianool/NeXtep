@@ -43,6 +43,11 @@ object WindowSystemUiHook {
                             onParkedSelected = { windowId ->
                                 WindowManager.unparkWindow(windowId)
                             },
+                            onParkedMaximized = { windowId ->
+                                // Unpark first (if parked), then maximize.
+                                WindowManager.unparkWindow(windowId)
+                                WindowManager.maximizeWindow(windowId)
+                            },
                             onParkedClosed = { windowId ->
                                 WindowManager.closeWindow(windowId)
                             },
@@ -54,8 +59,6 @@ object WindowSystemUiHook {
                 }
 
                 override fun onUnpark(windowId: Int) = WindowManager.unparkWindow(windowId)
-
-                override fun onClose(windowId: Int) = WindowManager.closeWindow(windowId)
 
                 override fun onExit() = WindowManager.exit()
             }

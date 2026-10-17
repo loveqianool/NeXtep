@@ -155,13 +155,21 @@ object WindowManager : WindowHost {
             windows[id] = rec.copy(isMaximized = false)
             Log.i(TAG, "restored id=$id rect=$rect")
         } else {
-            synchronized(savedRects) { savedRects[id] = currentRect(rec.view) }
-            val rect = usableRect(app)
-            applyRect(id, rect)
-            rec.view.setMaximized(true)
-            windows[id] = rec.copy(isMaximized = true)
-            Log.i(TAG, "maximized id=$id rect=$rect")
+            maximizeWindow(id)
         }
+    }
+
+    /** Maximize the window (no-op if already maximized). */
+    fun maximizeWindow(id: Int) {
+        val rec = windows[id] ?: return
+        if (rec.isMaximized) return
+        val app = appContext ?: return
+        synchronized(savedRects) { savedRects[id] = currentRect(rec.view) }
+        val rect = usableRect(app)
+        applyRect(id, rect)
+        rec.view.setMaximized(true)
+        windows[id] = rec.copy(isMaximized = true)
+        Log.i(TAG, "maximized id=$id rect=$rect")
     }
 
     fun setMuted(id: Int, muted: Boolean) {
