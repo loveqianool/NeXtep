@@ -44,9 +44,9 @@ object WindowSystemUiHook {
                                 WindowManager.unparkWindow(windowId)
                             },
                             onParkedMaximized = { windowId ->
-                                // Unpark first (if parked), then maximize.
+                                // Unpark first (if parked), then toggle maximize/restore.
                                 WindowManager.unparkWindow(windowId)
-                                WindowManager.maximizeWindow(windowId)
+                                WindowManager.toggleMaximize(windowId)
                             },
                             onParkedClosed = { windowId ->
                                 WindowManager.closeWindow(windowId)

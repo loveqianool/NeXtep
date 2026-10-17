@@ -329,7 +329,7 @@ class AppPanel(
         return layout
     }
 
-    /** Parked/maximized app row with maximize and ✕ buttons. */
+    /** Parked/maximized app row with maximize/restore and ✕ buttons. */
     private fun parkedRow(
         app: FreeWindowNotification.ParkedApp,
         onSelect: () -> Unit,
@@ -337,15 +337,13 @@ class AppPanel(
         onClose: () -> Unit,
     ): LinearLayout {
         val layout = simpleRow(app.label, onSelect)
-        // Maximize button (only show if not already maximized).
-        if (!app.isMaximized) {
-            layout.addView(TextView(context).apply {
-                text = "最大化"
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-                setPadding(dp(12), dp(4), dp(4), dp(4))
-                setOnClickListener { onMaximize() }
-            })
-        }
+        // Maximize/restore button (toggles, like the title bar button).
+        layout.addView(TextView(context).apply {
+            text = if (app.isMaximized) "恢复窗口" else "最大化"
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setPadding(dp(12), dp(4), dp(4), dp(4))
+            setOnClickListener { onMaximize() }
+        })
         // ✕ button for close.
         layout.addView(TextView(context).apply {
             text = "✕"
