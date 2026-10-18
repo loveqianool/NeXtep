@@ -36,7 +36,7 @@ object WindowSystemUiHook {
                         val ctx = app ?: return
                         val panel = AppPanel(
                             ctx,
-                            WindowManager.getParkedApps(),
+                            WindowManager.getBackgroundApps(),
                             onAppSelected = { component ->
                                 WindowManager.openApp(ctx, component)
                             },

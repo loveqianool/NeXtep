@@ -601,7 +601,9 @@ object WindowManager : WindowHost {
 
     // ------------------------------------------------------------ notification
 
-    fun getParkedApps(): List<FreeWindowNotification.ParkedApp> {
+    // 返回后台区列表：parked（藏起来的）+ maximized（最大化的）。
+    // 之前叫 getParkedApps，名不副实，2026-10-18 改名。
+    fun getBackgroundApps(): List<FreeWindowNotification.ParkedApp> {
         val app = appContext ?: return emptyList()
         return windows.values
             .filter { it.isParked || it.isMaximized }
@@ -616,8 +618,8 @@ object WindowManager : WindowHost {
 
     private fun updateNotification() {
         val app = appContext ?: return
-        val parked = getParkedApps()
-        FreeWindowNotification.update(app, parked)
+        val background = getBackgroundApps()
+        FreeWindowNotification.update(app, background)
     }
 
     private fun appLabel(app: Context, component: ComponentName): String {
