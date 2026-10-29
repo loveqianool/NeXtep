@@ -66,6 +66,7 @@ dependencies {
 
     implementation(libs.androidx.appcompat)
     implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.recyclerview)
     implementation(libs.material)
     implementation("androidx.viewpager:viewpager:1.0.0")
     testImplementation("junit:junit:4.13.2")

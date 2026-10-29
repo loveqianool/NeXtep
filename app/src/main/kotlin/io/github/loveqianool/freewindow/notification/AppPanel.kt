@@ -13,13 +13,17 @@ import android.text.TextWatcher
 import android.util.Log
 import android.util.TypedValue
 import android.view.Gravity
+import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.EditText
 import android.widget.ImageView
 import android.widget.LinearLayout
-import android.widget.ScrollView
 import android.widget.TextView
+import androidx.recyclerview.widget.DiffUtil
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.ListAdapter
+import androidx.recyclerview.widget.RecyclerView
 import java.util.concurrent.Executors
 
 /**
@@ -53,9 +57,17 @@ class AppPanel(
         val resolveInfo: android.content.pm.ResolveInfo,
     )
 
+    /** One app row: the entry plus its "已打开" state at render time. */
+    private data class AppRow(
+        val entry: AppEntry,
+        val isOpen: Boolean,
+    )
+
     private var dialog: Dialog? = null
     private var windowContainer: LinearLayout? = null
-    private var appRows: LinearLayout? = null
+    private var appRecyclerView: RecyclerView? = null
+    private var appEmptyView: TextView? = null
+    private val appAdapter by lazy { AppAdapter() }
     private var allApps: List<AppEntry> = emptyList()
     private var currentQuery: String = ""
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -96,25 +108,10 @@ class AppPanel(
         }
         root.addView(search)
 
-        val listContainer = LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            layoutParams = ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-            )
-        }
-        val scroll = ScrollView(context).apply {
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                0,
-                1f,
-            )
-            addView(listContainer)
-        }
-        root.addView(scroll)
-
         // Window sections (rebuilt by refreshWindowSections() after every
         // in-panel action, so the panel stays open for batch operations).
+        // Only a handful of windows exist, so they stay a plain layout;
+        // the app list below is the part that needs recycling.
         val windowBox = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             layoutParams = ViewGroup.LayoutParams(
@@ -122,25 +119,32 @@ class AppPanel(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
             )
         }
-        listContainer.addView(windowBox)
+        root.addView(windowBox)
         windowContainer = windowBox
         refreshWindowSections()
 
-        // Launchable apps.
-        listContainer.addView(sectionHeader("应用"))
-        val rows = LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            layoutParams = ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-            )
-        }
-        listContainer.addView(rows)
-        appRows = rows
-        rows.addView(TextView(context).apply {
+        // Launchable apps: a RecyclerView with a bounded height (weight 1
+        // inside the fixed-size dialog), so only visible rows are inflated.
+        // Putting it inside a ScrollView with WRAP_CONTENT would measure
+        // every row and defeat recycling, so it gets its own scroll area.
+        root.addView(sectionHeader("应用"))
+        val emptyView = TextView(context).apply {
             text = "加载中…"
             setPadding(dp(12), dp(12), dp(12), dp(12))
-        })
+        }
+        root.addView(emptyView)
+        appEmptyView = emptyView
+        val recyclerView = RecyclerView(context).apply {
+            layoutManager = LinearLayoutManager(context)
+            adapter = appAdapter
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                0,
+                1f,
+            )
+        }
+        root.addView(recyclerView)
+        appRecyclerView = recyclerView
 
         search.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
@@ -174,7 +178,9 @@ class AppPanel(
         dialog?.dismiss()
         dialog = null
         windowContainer = null
-        appRows = null
+        appRecyclerView = null
+        appEmptyView = null
+        appAdapter.submitList(emptyList())
     }
 
     /** Rebuild the "当前"/"后台" window sections from the current state. */
@@ -262,13 +268,15 @@ class AppPanel(
         imageView: ImageView,
         load: (PackageManager) -> Drawable,
     ) {
+        // Tag must be set before the cache check too: with recycled views
+        // a cache hit that left the old tag would let a stale async load
+        // for the previous row pass the tag guard and overwrite this icon.
+        imageView.tag = component
         val cached = iconCache.get(component)
         if (cached != null) {
             imageView.setImageDrawable(drawableCopy(cached))
             return
         }
-        // Tag guards against recycled views (not a RecyclerView, but cheap).
-        imageView.tag = component
         bgExecutor.execute {
             val icon = try {
                 load(context.packageManager)
@@ -286,29 +294,99 @@ class AppPanel(
     }
 
     private fun renderAppRows(query: String) {
-        val rows = appRows ?: return
-        rows.removeAllViews()
+        val recyclerView = appRecyclerView ?: return
+        val emptyView = appEmptyView ?: return
         val q = query.trim().lowercase()
         val filtered =
             if (q.isEmpty()) allApps
             else allApps.filter { it.label.lowercase().contains(q) }
         if (filtered.isEmpty()) {
-            rows.addView(TextView(context).apply {
-                text = if (allApps.isEmpty()) "加载中…" else "没有匹配的应用"
-                setPadding(dp(12), dp(12), dp(12), dp(12))
-            })
+            emptyView.text = if (allApps.isEmpty()) "加载中…" else "没有匹配的应用"
+            emptyView.visibility = View.VISIBLE
+            recyclerView.visibility = View.GONE
+            appAdapter.submitList(emptyList())
             return
         }
+        emptyView.visibility = View.GONE
+        recyclerView.visibility = View.VISIBLE
         val openComponents = getWindows().mapNotNull { it.component }.toSet()
-        filtered.forEach { app ->
-            rows.addView(
-                row(app, isOpen = app.component in openComponents) {
-                    Log.i(TAG, "panel: app selected ${app.component.flattenToShortString()}")
-                    onAppSelected(app.component)
-                    dismiss()
-                },
-            )
+        // DiffUtil (not removeAllViews + re-inflate) keeps visible rows
+        // in place on search and on "已打开" badge changes.
+        appAdapter.submitList(
+            filtered.map { app -> AppRow(app, isOpen = app.component in openComponents) },
+        )
+    }
+
+    /** App list adapter: ViewHolders are recycled, only visible rows exist. */
+    private inner class AppAdapter : ListAdapter<AppRow, AppViewHolder>(AppDiffCallback) {
+        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): AppViewHolder {
+            val layout = LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(8), dp(10), dp(8), dp(10))
+                isClickable = true
+                isFocusable = true
+                layoutParams = ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                )
+                val out = TypedValue()
+                if (context.theme.resolveAttribute(android.R.attr.selectableItemBackground, out, true)) {
+                    setBackgroundResource(out.resourceId)
+                }
+            }
+            val iconView = ImageView(context).apply {
+                layoutParams = LinearLayout.LayoutParams(dp(40), dp(40)).apply {
+                    marginEnd = dp(12)
+                }
+            }
+            layout.addView(iconView)
+            val labelView = TextView(context).apply {
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            }
+            layout.addView(labelView)
+            val badgeView = TextView(context).apply {
+                text = "已打开"
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                setPadding(dp(8), dp(4), dp(4), dp(4))
+            }
+            layout.addView(badgeView)
+            return AppViewHolder(layout, iconView, labelView, badgeView)
         }
+
+        override fun onBindViewHolder(holder: AppViewHolder, position: Int) {
+            holder.bind(getItem(position))
+        }
+    }
+
+    private inner class AppViewHolder(
+        private val layout: LinearLayout,
+        private val iconView: ImageView,
+        private val labelView: TextView,
+        private val badgeView: TextView,
+    ) : RecyclerView.ViewHolder(layout) {
+        fun bind(row: AppRow) {
+            labelView.text = row.entry.label
+            badgeView.visibility = if (row.isOpen) View.VISIBLE else View.GONE
+            // Clear the recycled icon first; loadIconCached sets the new
+            // one (synchronously on cache hit, async otherwise, tag-guarded).
+            iconView.setImageDrawable(null)
+            loadIconAsync(row.entry, iconView)
+            layout.setOnClickListener {
+                Log.i(TAG, "panel: app selected ${row.entry.component.flattenToShortString()}")
+                onAppSelected(row.entry.component)
+                dismiss()
+            }
+        }
+    }
+
+    private object AppDiffCallback : DiffUtil.ItemCallback<AppRow>() {
+        override fun areItemsTheSame(oldItem: AppRow, newItem: AppRow): Boolean =
+            oldItem.entry.component == newItem.entry.component
+
+        override fun areContentsTheSame(oldItem: AppRow, newItem: AppRow): Boolean =
+            oldItem.entry.label == newItem.entry.label && oldItem.isOpen == newItem.isOpen
     }
 
     private fun sectionHeader(title: String): TextView =
@@ -317,46 +395,6 @@ class AppPanel(
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
             setPadding(dp(4), dp(12), dp(4), dp(4))
         }
-
-    private fun row(app: AppEntry, isOpen: Boolean, onClick: () -> Unit): LinearLayout {
-        val layout = LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(8), dp(10), dp(8), dp(10))
-            isClickable = true
-            isFocusable = true
-            layoutParams = ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-            )
-            val out = TypedValue()
-            if (context.theme.resolveAttribute(android.R.attr.selectableItemBackground, out, true)) {
-                setBackgroundResource(out.resourceId)
-            }
-        }
-        // Icon loads async; placeholder until ready.
-        val iconView = ImageView(context).apply {
-            layoutParams = LinearLayout.LayoutParams(dp(40), dp(40)).apply {
-                marginEnd = dp(12)
-            }
-        }
-        layout.addView(iconView)
-        loadIconAsync(app, iconView)
-        layout.addView(TextView(context).apply {
-            text = app.label
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-        })
-        if (isOpen) {
-            layout.addView(TextView(context).apply {
-                text = "已打开"
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-                setPadding(dp(8), dp(4), dp(4), dp(4))
-            })
-        }
-        layout.setOnClickListener { onClick() }
-        return layout
-    }
 
     /**
      * Window row: app icon + label + mute badge, then action buttons.
