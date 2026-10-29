@@ -51,6 +51,12 @@ object WindowManager : WindowHost {
     private val savedRects = mutableMapOf<Int, Rect>()
     /** Pre-half-screen rect, restored when a half-screen window is dragged. */
     private val snapSavedRects = mutableMapOf<Int, Rect>()
+    /** Labels rarely change; avoid a PackageManager lookup per window per update. */
+    private val labelCache = ConcurrentHashMap<ComponentName, String>()
+    /** Last background list actually notified; identical lists skip rebuild. */
+    private var lastNotifiedBackground: List<FreeWindowNotification.ParkedApp>? = null
+    /** True while exit() is closing windows one by one. */
+    private var suppressNotification = false
     private val zOrder = mutableListOf<Int>()
     private val nextId = AtomicInteger(1)
 
@@ -197,10 +203,17 @@ object WindowManager : WindowHost {
      * point to the panel, and hiding it used to leave FreeWindow with no way
      * back until SystemUI restarted. The notification's empty state
      * ("暂无后台应用，点击打开应用面板") is the re-entry.
+     * Intermediate notification rebuilds are suppressed during the batch;
+     * one forced rebuild at the end is enough.
      */
     fun exit() {
-        windows.keys.toList().forEach(::closeWindow)
-        updateNotification()
+        suppressNotification = true
+        try {
+            windows.keys.toList().forEach(::closeWindow)
+        } finally {
+            suppressNotification = false
+        }
+        updateNotification(force = true)
         Log.i(TAG, "exit: all windows closed, notification kept")
     }
 
@@ -247,11 +260,16 @@ object WindowManager : WindowHost {
         if (rec.isMaximized) return
         val app = appContext ?: return
         var params = rec.view.layoutParams as? AndroidWindowManager.LayoutParams ?: return
+        // Hot path (MOVE fires at touch rate): usableRect() queries
+        // WindowMetrics, so compute it once here and reuse it for the
+        // half-screen check, the clamp and the edge snap.
+        val usable = usableRect(app)
+        val density = app.resources.displayMetrics.density
         // Dragging a half-screen window restores its pre-snap size first
         // (desktop-style), then the drag continues from the restored rect.
         synchronized(snapSavedRects) {
             val saved = snapSavedRects[id]
-            if (saved != null && isHalfScreenRect(app, currentRect(rec.view))) {
+            if (saved != null && isHalfScreenRect(usable, currentRect(rec.view))) {
                 snapSavedRects.remove(id)
                 applyRect(id, Rect(saved))
                 params = rec.view.layoutParams as? AndroidWindowManager.LayoutParams ?: return
@@ -261,12 +279,12 @@ object WindowManager : WindowHost {
         params.y += dy
         val clamped = clampRect(
             Rect(params.x, params.y, params.x + params.width, params.y + params.height),
-            usableRect(app),
-            rec.view.context.resources.displayMetrics.density,
+            usable,
+            density,
         )
         params.x = clamped.left
         params.y = clamped.top
-        snapToEdge(params, clamped, usableRect(app), rec.view.context.resources.displayMetrics.density)
+        snapToEdge(params, clamped, usable, density)
         wm?.updateViewLayout(rec.view, params)
     }
 
@@ -725,8 +743,7 @@ object WindowManager : WindowHost {
         }
     }
 
-    private fun isHalfScreenRect(app: Context, rect: Rect): Boolean {
-        val usable = usableRect(app)
+    private fun isHalfScreenRect(usable: Rect, rect: Rect): Boolean {
         return rect.width() == usable.width() / 2 &&
             (rect.left == usable.left || rect.right == usable.right)
     }
@@ -781,16 +798,26 @@ object WindowManager : WindowHost {
         }
     }
 
-    private fun updateNotification() {
+    private fun updateNotification(force: Boolean = false) {
+        if (suppressNotification && !force) return
         val app = appContext ?: return
         val background = getBackgroundApps()
+        // Rebuilding the notification (new PendingIntents included) is
+        // wasted work when the list is unchanged — e.g. restoreWindow()
+        // unparks then toggles, and the first step changes nothing here.
+        if (!force && background == lastNotifiedBackground) return
+        lastNotifiedBackground = background
         FreeWindowNotification.update(app, background)
     }
 
     private fun appLabel(app: Context, component: ComponentName): String {
-        return runCatching {
-            val pm = app.packageManager
-            pm.getActivityInfo(component, 0).loadLabel(pm)?.toString()
-        }.getOrNull() ?: component.packageName
+        return labelCache[component] ?: run {
+            val label = runCatching {
+                val pm = app.packageManager
+                pm.getActivityInfo(component, 0).loadLabel(pm)?.toString()
+            }.getOrNull() ?: component.packageName
+            labelCache[component] = label
+            label
+        }
     }
 }

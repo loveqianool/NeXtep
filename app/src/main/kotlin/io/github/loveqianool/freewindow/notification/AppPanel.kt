@@ -59,6 +59,7 @@ class AppPanel(
     private var allApps: List<AppEntry> = emptyList()
     private var currentQuery: String = ""
     private val mainHandler = Handler(Looper.getMainLooper())
+    private var pendingSearch: Runnable? = null
 
     fun isShowing(): Boolean = dialog?.isShowing == true
 
@@ -146,7 +147,12 @@ class AppPanel(
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
             override fun afterTextChanged(s: Editable?) {
                 currentQuery = s?.toString().orEmpty()
-                renderAppRows(currentQuery)
+                // Debounce: recreating every row per keystroke is the
+                // panel's most expensive operation; wait until typing pauses.
+                pendingSearch?.let { mainHandler.removeCallbacks(it) }
+                val task = Runnable { renderAppRows(currentQuery) }
+                pendingSearch = task
+                mainHandler.postDelayed(task, 150)
             }
         })
 
@@ -437,7 +443,13 @@ class AppPanel(
 
     private companion object {
         const val TAG = "FreeWindow"
-        val bgExecutor = Executors.newSingleThreadExecutor()
+        /**
+         * Icon decoding used to be single-threaded: with ~200 apps the
+         * last icons took seconds to appear. Four threads decode in
+         * parallel; the per-view tag guard still prevents a stale icon
+         * from landing on a rebuilt row, and LruCache is synchronized.
+         */
+        val bgExecutor = Executors.newFixedThreadPool(4)
         /**
          * Shared across panel instances (it used to be per-instance, so
          * every panel open re-decoded all icons). The app list itself is
