@@ -19,6 +19,7 @@ import android.view.WindowManager
 import android.widget.EditText
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.LinearLayoutManager
@@ -65,6 +66,7 @@ class AppPanel(
 
     private var dialog: Dialog? = null
     private var windowContainer: LinearLayout? = null
+    private var windowScroll: ScrollView? = null
     private var appRecyclerView: RecyclerView? = null
     private var appEmptyView: TextView? = null
     private val appAdapter by lazy { AppAdapter() }
@@ -119,7 +121,17 @@ class AppPanel(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
             )
         }
-        root.addView(windowBox)
+        // Capped scroll area (see capWindowSection): window rows stay
+        // above the app list, but they must not squeeze it to nothing.
+        val windowScrollView = ScrollView(context).apply {
+            layoutParams = ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            )
+            addView(windowBox)
+        }
+        root.addView(windowScrollView)
+        windowScroll = windowScrollView
         windowContainer = windowBox
         refreshWindowSections()
 
@@ -137,6 +149,9 @@ class AppPanel(
         val recyclerView = RecyclerView(context).apply {
             layoutManager = LinearLayoutManager(context)
             adapter = appAdapter
+            // Hidden until the first non-empty render; otherwise the
+            // "加载中…" text sits above a blank list area.
+            visibility = View.GONE
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 0,
@@ -151,8 +166,8 @@ class AppPanel(
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
             override fun afterTextChanged(s: Editable?) {
                 currentQuery = s?.toString().orEmpty()
-                // Debounce: recreating every row per keystroke is the
-                // panel's most expensive operation; wait until typing pauses.
+                // Debounce: filtering + diffing on every keystroke is
+                // wasted work; wait until typing pauses.
                 pendingSearch?.let { mainHandler.removeCallbacks(it) }
                 val task = Runnable { renderAppRows(currentQuery) }
                 pendingSearch = task
@@ -178,6 +193,7 @@ class AppPanel(
         dialog?.dismiss()
         dialog = null
         windowContainer = null
+        windowScroll = null
         appRecyclerView = null
         appEmptyView = null
         appAdapter.submitList(emptyList())
@@ -200,6 +216,41 @@ class AppPanel(
         }
         // Keep the "已打开" badges in the app list in sync after a close.
         renderAppRows(currentQuery)
+        capWindowSection()
+    }
+
+    /**
+     * Keep the window section from squeezing the app list: if its content
+     * is taller than [WINDOW_SECTION_MAX_HEIGHT_DP], cap the scroll area
+     * to that height and let the section scroll internally; otherwise let
+     * it wrap its content so a short section does not waste space.
+     * Measured after layout (hence the post): before the first layout pass
+     * the box height is 0 and there is nothing to cap yet.
+     */
+    private fun capWindowSection() {
+        val scroll = windowScroll ?: return
+        val box = windowContainer ?: return
+        scroll.post {
+            if (!isShowing()) return@post
+            val contentHeight = box.height
+            // The first post can run on attach, before layout, when the
+            // height is still 0 even though rows exist — retry then,
+            // instead of missing the cap until the next refresh. An
+            // empty section (no children) needs no cap at all.
+            if (contentHeight == 0) {
+                if (box.childCount > 0) scroll.post { capWindowSection() }
+                return@post
+            }
+            val cap = dp(WINDOW_SECTION_MAX_HEIGHT_DP)
+            val params = scroll.layoutParams
+            val target =
+                if (contentHeight > cap) cap
+                else ViewGroup.LayoutParams.WRAP_CONTENT
+            if (params.height != target) {
+                params.height = target
+                scroll.layoutParams = params
+            }
+        }
     }
 
     private fun loadAppsAsync() {
@@ -491,6 +542,7 @@ class AppPanel(
 
     private companion object {
         const val TAG = "FreeWindow"
+        const val WINDOW_SECTION_MAX_HEIGHT_DP = 240
         /**
          * Icon decoding used to be single-threaded: with ~200 apps the
          * last icons took seconds to appear. Four threads decode in
