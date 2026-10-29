@@ -20,6 +20,12 @@ object WindowSystemUiHook {
     private const val TAG = "FreeWindow"
     private val started = AtomicBoolean(false)
 
+    // Singleton guard: onShowPanel() used to create a fresh AppPanel on every
+    // broadcast, so a double delivery stacked two dialogs (AppPanel.show()'s
+    // isShowing check only guards one instance). A dismissed panel reports
+    // isShowing() == false, so the next tap still creates a new one.
+    private var currentPanel: AppPanel? = null
+
     fun install() {
         if (!started.compareAndSet(false, true)) return
         Thread({
@@ -32,26 +38,41 @@ object WindowSystemUiHook {
             FreeWindowNotification.listener = object : FreeWindowNotification.Listener {
                 override fun onShowPanel() {
                     Log.i(TAG, "show panel requested")
+                    if (currentPanel?.isShowing() == true) {
+                        Log.i(TAG, "panel already showing, ignore")
+                        return
+                    }
                     try {
                         val ctx = app ?: return
                         val panel = AppPanel(
                             ctx,
-                            WindowManager.getBackgroundApps(),
+                            getWindows = { WindowManager.getPanelWindows() },
                             onAppSelected = { component ->
-                                WindowManager.openApp(ctx, component)
+                                // Already open: go to that window instead of
+                                // opening a duplicate.
+                                val existing = WindowManager.findWindowId(component)
+                                if (existing != null) {
+                                    WindowManager.unparkWindow(existing)
+                                } else {
+                                    WindowManager.openApp(ctx, component)
+                                }
                             },
-                            onParkedSelected = { windowId ->
-                                WindowManager.unparkWindow(windowId)
+                            onWindowSelected = { windowId ->
+                                WindowManager.restoreWindow(windowId)
                             },
-                            onParkedMaximized = { windowId ->
+                            onWindowMaximized = { windowId ->
                                 // Unpark first (if parked), then toggle maximize/restore.
                                 WindowManager.unparkWindow(windowId)
                                 WindowManager.toggleMaximize(windowId)
                             },
-                            onParkedClosed = { windowId ->
+                            onWindowClosed = { windowId ->
                                 WindowManager.closeWindow(windowId)
                             },
+                            onWindowParked = { windowId ->
+                                WindowManager.parkWindow(windowId)
+                            },
                         )
+                        currentPanel = panel
                         panel.show()
                     } catch (e: Throwable) {
                         Log.i(TAG, "show panel failed: ${e.message}")
@@ -59,6 +80,8 @@ object WindowSystemUiHook {
                 }
 
                 override fun onUnpark(windowId: Int) = WindowManager.unparkWindow(windowId)
+
+                override fun onRestore(windowId: Int) = WindowManager.restoreWindow(windowId)
 
                 override fun onExit() = WindowManager.exit()
             }

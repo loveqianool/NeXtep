@@ -15,11 +15,16 @@ import android.util.Log
  *
  * - Tapping the notification body sends [ACTION_SHOW_PANEL] (explicit broadcast
  *   to the SystemUI package) to open the app panel.
- * - Parked apps are listed with [Notification.InboxStyle]; each gets a "切换"
- *   action that sends [ACTION_UNPARK] carrying [EXTRA_WINDOW_ID].
- * - An "退出" action sends [ACTION_EXIT].
+ * - Parked apps are listed with [Notification.InboxStyle]; a parked app gets
+ *   a "切换" action that sends [ACTION_UNPARK] carrying [EXTRA_WINDOW_ID],
+ *   while a maximized app gets a "恢复窗口" action that sends
+ *   [ACTION_RESTORE] (unpark + toggle maximize, same as the panel's restore
+ *   button — a bare unpark is a no-op on an already-visible maximized
+ *   window, which is why the old "前台" action looked useless).
+ * - A "关闭全部" action sends [ACTION_EXIT]: it closes every window but
+ *   keeps the notification, so the panel stays reachable.
  *
- * The three actions are received by an internal [BroadcastReceiver] registered
+ * The actions are received by an internal [BroadcastReceiver] registered
  * with [Context.RECEIVER_NOT_EXPORTED] and forwarded to [listener] in the
  * process where [show] was called (the SystemUI process via the Xposed module).
  */
@@ -27,6 +32,7 @@ object FreeWindowNotification {
 
     const val ACTION_SHOW_PANEL = "io.github.loveqianool.freewindow.SHOW_PANEL"
     const val ACTION_UNPARK = "io.github.loveqianool.freewindow.UNPARK"
+    const val ACTION_RESTORE = "io.github.loveqianool.freewindow.RESTORE"
     const val ACTION_EXIT = "io.github.loveqianool.freewindow.EXIT"
 
     const val EXTRA_WINDOW_ID = "io.github.loveqianool.freewindow.extra.WINDOW_ID"
@@ -35,16 +41,21 @@ object FreeWindowNotification {
     private const val CHANNEL_ID = "freewindow"
     private const val NOTIFICATION_ID = 41
 
-    /** A parked (hidden) or maximized free window shown in the notification. */
+    /** A free window shown in the notification / panel. */
     data class ParkedApp(
         val windowId: Int,
         val label: String,
         val isMaximized: Boolean = false,
+        /** Null for notification-only entries; panel rows carry it for icons. */
+        val component: android.content.ComponentName? = null,
+        val isParked: Boolean = false,
+        val isMuted: Boolean = false,
     )
 
     interface Listener {
         fun onShowPanel()
         fun onUnpark(windowId: Int)
+        fun onRestore(windowId: Int)
         fun onExit()
     }
 
@@ -61,6 +72,11 @@ object FreeWindowNotification {
                     val windowId = intent.getIntExtra(EXTRA_WINDOW_ID, -1)
                     Log.i(TAG, "notification: unpark window=$windowId")
                     if (windowId >= 0) listener?.onUnpark(windowId)
+                }
+                ACTION_RESTORE -> {
+                    val windowId = intent.getIntExtra(EXTRA_WINDOW_ID, -1)
+                    Log.i(TAG, "notification: restore window=$windowId")
+                    if (windowId >= 0) listener?.onRestore(windowId)
                 }
                 ACTION_EXIT -> {
                     Log.i(TAG, "notification: exit")
@@ -129,12 +145,14 @@ object FreeWindowNotification {
             .setOnlyAlertOnce(true)
 
         parkedApps.forEach { app ->
-            // "切换" restores a parked window (or brings a maximized one to front).
+            // Parked: "切换" unparks. Maximized: "恢复窗口" unparks and
+            // restores the windowed size (same as the panel's restore button).
+            val isMaximized = app.isMaximized
             builder.addAction(
                 Notification.Action.Builder(
                     null,
-                    if (app.isMaximized) "前台" else "切换",
-                    broadcastIntent(context, ACTION_UNPARK, requestCode = 100 + app.windowId) {
+                    if (isMaximized) "恢复窗口" else "切换",
+                    broadcastIntent(context, if (isMaximized) ACTION_RESTORE else ACTION_UNPARK, requestCode = 100 + app.windowId) {
                         putExtra(EXTRA_WINDOW_ID, app.windowId)
                     },
                 ).build(),
@@ -144,7 +162,7 @@ object FreeWindowNotification {
         builder.addAction(
             Notification.Action.Builder(
                 null,
-                "退出",
+                "关闭全部",
                 broadcastIntent(context, ACTION_EXIT, requestCode = 2, null),
             ).build(),
         )
@@ -191,6 +209,7 @@ object FreeWindowNotification {
         val filter = IntentFilter().apply {
             addAction(ACTION_SHOW_PANEL)
             addAction(ACTION_UNPARK)
+            addAction(ACTION_RESTORE)
             addAction(ACTION_EXIT)
         }
         context.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)

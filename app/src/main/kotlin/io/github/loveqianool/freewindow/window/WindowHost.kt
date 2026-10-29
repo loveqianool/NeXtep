@@ -22,6 +22,9 @@ interface WindowHost {
     /** Title-bar drag: move the window by (dx, dy) pixels. */
     fun onMove(id: Int, dx: Int, dy: Int)
 
+    /** Title-bar drag released: edge snap may resize to half-screen here. */
+    fun onMoveEnd(id: Int)
+
     /** Resize drag released: commit [rect] as the new window size. */
     fun onResizeCommit(id: Int, rect: android.graphics.Rect)
 

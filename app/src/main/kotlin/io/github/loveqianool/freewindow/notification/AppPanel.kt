@@ -23,23 +23,28 @@ import android.widget.TextView
 import java.util.concurrent.Executors
 
 /**
- * App panel: a dialog with two sections.
+ * App panel: a dialog with window sections plus the app list.
  *
- * - "后台": parked windows; tapping one restores it via [onParkedSelected].
+ * - "当前": visible windows (including maximized ones).
+ * - "后台": parked windows.
  * - "应用": launchable apps queried from PackageManager, filterable through
  *   the search box at the top; tapping one fires [onAppSelected].
  *
- * Either callback dismisses the panel. The dialog uses
+ * Window rows are built from [getWindows] on every refresh, so maximize /
+ * park / close actions can stay in the panel (they refresh the rows instead
+ * of dismissing it). Only tapping a row (go to a window) or an app (launch
+ * it) dismisses the panel. The dialog uses
  * [WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY] so it can be shown
  * from the SystemUI process, and it is focusable so the search box gets IME.
  */
 class AppPanel(
     private val context: Context,
-    private val parkedApps: List<FreeWindowNotification.ParkedApp>,
+    private val getWindows: () -> List<FreeWindowNotification.ParkedApp>,
     private val onAppSelected: (ComponentName) -> Unit,
-    private val onParkedSelected: (windowId: Int) -> Unit,
-    private val onParkedMaximized: (windowId: Int) -> Unit,
-    private val onParkedClosed: (windowId: Int) -> Unit,
+    private val onWindowSelected: (windowId: Int) -> Unit,
+    private val onWindowMaximized: (windowId: Int) -> Unit,
+    private val onWindowClosed: (windowId: Int) -> Unit,
+    private val onWindowParked: (windowId: Int) -> Unit,
 ) {
 
     private data class AppEntry(
@@ -48,14 +53,11 @@ class AppPanel(
         val resolveInfo: android.content.pm.ResolveInfo,
     )
 
-    /** LRU cache for app icons; avoids re-decoding on every panel open. */
-    private val iconCache = object : android.util.LruCache<ComponentName, Drawable>(64) {
-        override fun sizeOf(key: ComponentName, value: Drawable): Int = 1
-    }
-
     private var dialog: Dialog? = null
+    private var windowContainer: LinearLayout? = null
     private var appRows: LinearLayout? = null
     private var allApps: List<AppEntry> = emptyList()
+    private var currentQuery: String = ""
     private val mainHandler = Handler(Looper.getMainLooper())
 
     fun isShowing(): Boolean = dialog?.isShowing == true
@@ -110,34 +112,20 @@ class AppPanel(
         }
         root.addView(scroll)
 
-        // Section 1: parked/maximized windows.
-        if (parkedApps.isNotEmpty()) {
-            listContainer.addView(sectionHeader("后台"))
-            parkedApps.forEach { app ->
-                listContainer.addView(
-                    parkedRow(
-                        app,
-                        onSelect = {
-                            Log.i(TAG, "panel: parked selected window=${app.windowId}")
-                            onParkedSelected(app.windowId)
-                            dismiss()
-                        },
-                        onMaximize = {
-                            Log.i(TAG, "panel: parked maximized window=${app.windowId}")
-                            onParkedMaximized(app.windowId)
-                            dismiss()
-                        },
-                        onClose = {
-                            Log.i(TAG, "panel: parked closed window=${app.windowId}")
-                            onParkedClosed(app.windowId)
-                            dismiss()
-                        },
-                    ),
-                )
-            }
+        // Window sections (rebuilt by refreshWindowSections() after every
+        // in-panel action, so the panel stays open for batch operations).
+        val windowBox = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            )
         }
+        listContainer.addView(windowBox)
+        windowContainer = windowBox
+        refreshWindowSections()
 
-        // Section 2: launchable apps.
+        // Launchable apps.
         listContainer.addView(sectionHeader("应用"))
         val rows = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
@@ -157,7 +145,8 @@ class AppPanel(
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
             override fun afterTextChanged(s: Editable?) {
-                renderAppRows(s?.toString().orEmpty())
+                currentQuery = s?.toString().orEmpty()
+                renderAppRows(currentQuery)
             }
         })
 
@@ -178,7 +167,27 @@ class AppPanel(
     fun dismiss() {
         dialog?.dismiss()
         dialog = null
+        windowContainer = null
         appRows = null
+    }
+
+    /** Rebuild the "当前"/"后台" window sections from the current state. */
+    fun refreshWindowSections() {
+        val container = windowContainer ?: return
+        container.removeAllViews()
+        val windows = getWindows()
+        val current = windows.filter { !it.isParked }
+        val background = windows.filter { it.isParked }
+        if (current.isNotEmpty()) {
+            container.addView(sectionHeader("当前"))
+            current.forEach { app -> container.addView(windowRow(app, isCurrent = true)) }
+        }
+        if (background.isNotEmpty()) {
+            container.addView(sectionHeader("后台"))
+            background.forEach { app -> container.addView(windowRow(app, isCurrent = false)) }
+        }
+        // Keep the "已打开" badges in the app list in sync after a close.
+        renderAppRows(currentQuery)
     }
 
     private fun loadAppsAsync() {
@@ -188,7 +197,7 @@ class AppPanel(
                 // The dialog may have been dismissed while loading.
                 if (!isShowing()) return@post
                 allApps = apps
-                renderAppRows("")
+                renderAppRows(currentQuery)
                 Log.i(TAG, "app panel loaded ${apps.size} apps")
             }
         }
@@ -216,22 +225,44 @@ class AppPanel(
 
     /** Loads the icon for [entry] on a bg thread, then sets it on [imageView]. */
     private fun loadIconAsync(entry: AppEntry, imageView: ImageView) {
-        val cached = iconCache.get(entry.component)
+        loadIconCached(entry.component, imageView) { pm ->
+            entry.resolveInfo.loadIcon(pm)
+        }
+    }
+
+    /** Loads a window's app icon (activity icon, falling back to the app icon). */
+    private fun loadWindowIconAsync(component: ComponentName, imageView: ImageView) {
+        loadIconCached(component, imageView) { pm ->
+            try {
+                pm.getActivityInfo(component, 0).loadIcon(pm)
+            } catch (e: Throwable) {
+                pm.getApplicationIcon(component.packageName)
+            }
+        }
+    }
+
+    /** Shared icon loader: cache hit is synchronous, misses decode on a bg thread. */
+    private fun loadIconCached(
+        component: ComponentName,
+        imageView: ImageView,
+        load: (PackageManager) -> Drawable,
+    ) {
+        val cached = iconCache.get(component)
         if (cached != null) {
             imageView.setImageDrawable(cached)
             return
         }
         // Tag guards against recycled views (not a RecyclerView, but cheap).
-        imageView.tag = entry.component
+        imageView.tag = component
         bgExecutor.execute {
             val icon = try {
-                entry.resolveInfo.loadIcon(context.packageManager)
+                load(context.packageManager)
             } catch (e: Throwable) {
                 null
             } ?: return@execute
-            iconCache.put(entry.component, icon)
+            iconCache.put(component, icon)
             mainHandler.post {
-                if (imageView.tag == entry.component) {
+                if (imageView.tag == component) {
                     imageView.setImageDrawable(icon)
                 }
             }
@@ -252,9 +283,10 @@ class AppPanel(
             })
             return
         }
+        val openComponents = getWindows().mapNotNull { it.component }.toSet()
         filtered.forEach { app ->
             rows.addView(
-                row(app) {
+                row(app, isOpen = app.component in openComponents) {
                     Log.i(TAG, "panel: app selected ${app.component.flattenToShortString()}")
                     onAppSelected(app.component)
                     dismiss()
@@ -270,7 +302,7 @@ class AppPanel(
             setPadding(dp(4), dp(12), dp(4), dp(4))
         }
 
-    private fun row(app: AppEntry, onClick: () -> Unit): LinearLayout {
+    private fun row(app: AppEntry, isOpen: Boolean, onClick: () -> Unit): LinearLayout {
         val layout = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -299,12 +331,27 @@ class AppPanel(
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         })
+        if (isOpen) {
+            layout.addView(TextView(context).apply {
+                text = "已打开"
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                setPadding(dp(8), dp(4), dp(4), dp(4))
+            })
+        }
         layout.setOnClickListener { onClick() }
         return layout
     }
 
-    /** Simple text row (for parked apps, no icon). */
-    private fun simpleRow(label: String, onClick: () -> Unit): LinearLayout {
+    /**
+     * Window row: app icon + label + mute badge, then action buttons.
+     * Tapping the row goes to the window and dismisses the panel; the
+     * buttons refresh the sections instead, so several windows can be
+     * managed without reopening the panel.
+     */
+    private fun windowRow(
+        app: FreeWindowNotification.ParkedApp,
+        isCurrent: Boolean,
+    ): LinearLayout {
         val layout = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -320,37 +367,68 @@ class AppPanel(
                 setBackgroundResource(out.resourceId)
             }
         }
+        app.component?.let { component ->
+            val iconView = ImageView(context).apply {
+                layoutParams = LinearLayout.LayoutParams(dp(40), dp(40)).apply {
+                    marginEnd = dp(12)
+                }
+            }
+            layout.addView(iconView)
+            loadWindowIconAsync(component, iconView)
+        }
         layout.addView(TextView(context).apply {
-            text = label
+            text = app.label
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         })
-        layout.setOnClickListener { onClick() }
-        return layout
-    }
-
-    /** Parked/maximized app row with maximize/restore and ✕ buttons. */
-    private fun parkedRow(
-        app: FreeWindowNotification.ParkedApp,
-        onSelect: () -> Unit,
-        onMaximize: () -> Unit,
-        onClose: () -> Unit,
-    ): LinearLayout {
-        val layout = simpleRow(app.label, onSelect)
-        // Maximize/restore button (toggles, like the title bar button).
+        if (app.isMuted) {
+            layout.addView(TextView(context).apply {
+                text = "🔇"
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+                setPadding(dp(8), dp(4), dp(4), dp(4))
+            })
+        }
+        // Park button: only for visible windows (background ones are parked already).
+        if (isCurrent) {
+            layout.addView(TextView(context).apply {
+                text = "▽"
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
+                setPadding(dp(12), dp(4), dp(4), dp(4))
+                setOnClickListener {
+                    Log.i(TAG, "panel: window parked window=${app.windowId}")
+                    onWindowParked(app.windowId)
+                    refreshWindowSections()
+                }
+            })
+        }
+        // Maximize/restore button: same glyphs as the title bar
+        // (TitleBar.setMaximized: maximized -> 🗗, windowed -> ⛶).
         layout.addView(TextView(context).apply {
-            text = if (app.isMaximized) "恢复窗口" else "最大化"
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            text = if (app.isMaximized) "🗗" else "⛶"
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
             setPadding(dp(12), dp(4), dp(4), dp(4))
-            setOnClickListener { onMaximize() }
+            setOnClickListener {
+                Log.i(TAG, "panel: window maximized window=${app.windowId}")
+                onWindowMaximized(app.windowId)
+                refreshWindowSections()
+            }
         })
         // ✕ button for close.
         layout.addView(TextView(context).apply {
             text = "✕"
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
             setPadding(dp(12), dp(4), dp(4), dp(4))
-            setOnClickListener { onClose() }
+            setOnClickListener {
+                Log.i(TAG, "panel: window closed window=${app.windowId}")
+                onWindowClosed(app.windowId)
+                refreshWindowSections()
+            }
         })
+        layout.setOnClickListener {
+            Log.i(TAG, "panel: window selected window=${app.windowId}")
+            onWindowSelected(app.windowId)
+            dismiss()
+        }
         return layout
     }
 
@@ -360,5 +438,13 @@ class AppPanel(
     private companion object {
         const val TAG = "FreeWindow"
         val bgExecutor = Executors.newSingleThreadExecutor()
+        /**
+         * Shared across panel instances (it used to be per-instance, so
+         * every panel open re-decoded all icons). The app list itself is
+         * still queried on each open, so installs/uninstalls stay fresh.
+         */
+        val iconCache = object : android.util.LruCache<ComponentName, Drawable>(64) {
+            override fun sizeOf(key: ComponentName, value: Drawable): Int = 1
+        }
     }
 }

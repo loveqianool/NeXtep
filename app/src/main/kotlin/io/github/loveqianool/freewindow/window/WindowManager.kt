@@ -37,6 +37,11 @@ import java.util.concurrent.atomic.AtomicInteger
  */
 object WindowManager : WindowHost {
     private const val TAG = "FreeWindow"
+    /** Drag within this distance of a usable edge snaps to that edge. */
+    private const val SNAP_DP = 24
+    /** At least this much of a window stays visible, so it can be dragged back. */
+    private const val MIN_VISIBLE_DP = 80
+    private const val MIN_SIZE_DP = 200
 
     /** All windows by id. */
     private val windows: MutableMap<Int, WindowRecord> = ConcurrentHashMap()
@@ -44,6 +49,8 @@ object WindowManager : WindowHost {
     private val displays = ConcurrentHashMap<Int, VirtualDisplay>()
     private val surfaces = ConcurrentHashMap<Int, Surface>()
     private val savedRects = mutableMapOf<Int, Rect>()
+    /** Pre-half-screen rect, restored when a half-screen window is dragged. */
+    private val snapSavedRects = mutableMapOf<Int, Rect>()
     private val zOrder = mutableListOf<Int>()
     private val nextId = AtomicInteger(1)
 
@@ -107,6 +114,7 @@ object WindowManager : WindowHost {
         val rec = windows.remove(id) ?: return
         synchronized(zOrder) { zOrder.remove(id) }
         synchronized(savedRects) { savedRects.remove(id) }
+        synchronized(snapSavedRects) { snapSavedRects.remove(id) }
         // AppOps mute is persistent; if this was the last muted window for the
         // package, restore audio so the app isn't silently muted after close.
         if (rec.isMuted) {
@@ -148,6 +156,7 @@ object WindowManager : WindowHost {
     fun toggleMaximize(id: Int) {
         val rec = windows[id] ?: return
         val app = appContext ?: return
+        synchronized(snapSavedRects) { snapSavedRects.remove(id) }
         if (rec.isMaximized) {
             val rect = synchronized(savedRects) { savedRects.remove(id) } ?: defaultRect(app)
             applyRect(id, rect)
@@ -157,6 +166,7 @@ object WindowManager : WindowHost {
         } else {
             maximizeWindow(id)
         }
+        updateNotification()
     }
 
     /** Maximize the window (no-op if already maximized). */
@@ -182,11 +192,39 @@ object WindowManager : WindowHost {
         Log.i(TAG, "setMuted id=$id muted=$muted")
     }
 
-    /** Close every window and hide the notification. */
+    /**
+     * Close every window, but keep the notification: it is the only entry
+     * point to the panel, and hiding it used to leave FreeWindow with no way
+     * back until SystemUI restarted. The notification's empty state
+     * ("暂无后台应用，点击打开应用面板") is the re-entry.
+     */
     fun exit() {
         windows.keys.toList().forEach(::closeWindow)
-        appContext?.let { FreeWindowNotification.hide(it) }
-        Log.i(TAG, "exit")
+        updateNotification()
+        Log.i(TAG, "exit: all windows closed, notification kept")
+    }
+
+    /**
+     * "Go to this window", the unified panel/notification row-tap semantics:
+     * a parked window is shown, and a maximized one is additionally restored
+     * to its windowed size (a bare unpark on a maximized window is a no-op
+     * when it is already on top).
+     */
+    fun restoreWindow(id: Int) {
+        val rec = windows[id] ?: return
+        if (rec.isMaximized) {
+            unparkWindow(id)
+            toggleMaximize(id)
+        } else {
+            unparkWindow(id)
+        }
+    }
+
+    /** Window id for an already-open [componentName], most-recent first. */
+    fun findWindowId(componentName: ComponentName): Int? {
+        return synchronized(zOrder) {
+            zOrder.asReversed().firstOrNull { windows[it]?.componentName == componentName }
+        }
     }
 
     // ------------------------------------------------------------ WindowHost
@@ -207,10 +245,59 @@ object WindowManager : WindowHost {
     override fun onMove(id: Int, dx: Int, dy: Int) {
         val rec = windows[id] ?: return
         if (rec.isMaximized) return
-        val params = rec.view.layoutParams as? AndroidWindowManager.LayoutParams ?: return
+        val app = appContext ?: return
+        var params = rec.view.layoutParams as? AndroidWindowManager.LayoutParams ?: return
+        // Dragging a half-screen window restores its pre-snap size first
+        // (desktop-style), then the drag continues from the restored rect.
+        synchronized(snapSavedRects) {
+            val saved = snapSavedRects[id]
+            if (saved != null && isHalfScreenRect(app, currentRect(rec.view))) {
+                snapSavedRects.remove(id)
+                applyRect(id, Rect(saved))
+                params = rec.view.layoutParams as? AndroidWindowManager.LayoutParams ?: return
+            }
+        }
         params.x += dx
         params.y += dy
+        val clamped = clampRect(
+            Rect(params.x, params.y, params.x + params.width, params.y + params.height),
+            usableRect(app),
+            rec.view.context.resources.displayMetrics.density,
+        )
+        params.x = clamped.left
+        params.y = clamped.top
+        snapToEdge(params, clamped, usableRect(app), rec.view.context.resources.displayMetrics.density)
         wm?.updateViewLayout(rec.view, params)
+    }
+
+    /**
+     * Title-bar drag released: dragging to the left/right edge snaps the
+     * window to that half of the usable area (the pre-snap rect is kept so
+     * the next drag restores it). Edge alignment alone is handled by the
+     * snap in [onMove]; this is only the half-screen resize.
+     */
+    override fun onMoveEnd(id: Int) {
+        val rec = windows[id] ?: return
+        if (rec.isMaximized) return
+        val app = appContext ?: return
+        val rect = currentRect(rec.view)
+        val usable = usableRect(app)
+        if (rect.width() >= (usable.width() * 0.9).toInt()) return
+        val density = app.resources.displayMetrics.density
+        val snapPx = (SNAP_DP * density).toInt()
+        val halfW = usable.width() / 2
+        val halfRect = when {
+            rect.left <= usable.left + snapPx ->
+                Rect(usable.left, usable.top, usable.left + halfW, usable.bottom)
+            rect.right >= usable.right - snapPx ->
+                Rect(usable.right - halfW, usable.top, usable.right, usable.bottom)
+            else -> return
+        }
+        synchronized(snapSavedRects) {
+            if (!snapSavedRects.containsKey(id)) snapSavedRects[id] = Rect(rect)
+        }
+        applyRect(id, halfRect)
+        Log.i(TAG, "snapped to half id=$id rect=$halfRect")
     }
 
     override fun onResizeCommit(id: Int, rect: android.graphics.Rect) {
@@ -223,15 +310,19 @@ object WindowManager : WindowHost {
             Log.i(TAG, "onResizeCommit: maximized, skip")
             return
         }
+        val app = appContext ?: return
+        // Manual resize replaces any half-screen snap.
+        synchronized(snapSavedRects) { snapSavedRects.remove(id) }
+        val clamped = clampRect(rect, usableRect(app), app.resources.displayMetrics.density)
         val params = rec.view.layoutParams as? AndroidWindowManager.LayoutParams ?: run {
             Log.i(TAG, "onResizeCommit: bad layoutParams")
             return
         }
-        Log.i(TAG, "onResizeCommit: old=${params.width}x${params.height} new=${rect.width()}x${rect.height()}")
-        params.width = rect.width()
-        params.height = rect.height()
-        params.x = rect.left
-        params.y = rect.top
+        Log.i(TAG, "onResizeCommit: old=${params.width}x${params.height} new=${clamped.width()}x${clamped.height()}")
+        params.width = clamped.width()
+        params.height = clamped.height()
+        params.x = clamped.left
+        params.y = clamped.top
         val wmRef = wm
         if (wmRef == null) {
             Log.i(TAG, "onResizeCommit: wm is NULL!")
@@ -245,7 +336,7 @@ object WindowManager : WindowHost {
         if (vd != null) {
             val app = appContext
             val dpi = if (app != null) densityDpi(app) else 440
-            val (vdW, vdH) = vdSizeForWindow(rect, rec.view)
+            val (vdW, vdH) = vdSizeForWindow(clamped, rec.view)
             runCatching {
                 vd.resize(vdW, vdH, dpi)
                 Log.i(TAG, "onResizeCommit: vd resized to ${vdW}x${vdH}")
@@ -585,6 +676,62 @@ object WindowManager : WindowHost {
     }
 
     /**
+     * Clamp [rect] so the title bar can never leave the usable area: the
+     * top stays in bounds (so the 38dp bar is reachable) and at least
+     * [MIN_VISIBLE_DP] of width stays on screen on either side. Size is
+     * clamped to the usable area and to [MIN_SIZE_DP].
+     */
+    private fun clampRect(rect: Rect, usable: Rect, density: Float): Rect {
+        val minPx = (MIN_SIZE_DP * density).toInt()
+        val visiblePx = (MIN_VISIBLE_DP * density).toInt()
+        val barPx = (FreeWindowView.TITLE_BAR_DP * density).toInt()
+        // coerceIn() throws on an empty range; fall back to keeping a narrow
+        // window fully inside when it is smaller than 2 * MIN_VISIBLE_DP.
+        val leftLow = usable.left - rect.width() + visiblePx
+        val leftHigh = usable.right - visiblePx
+        var left = if (leftLow <= leftHigh) {
+            rect.left.coerceIn(leftLow, leftHigh)
+        } else {
+            rect.left.coerceIn(usable.left, (usable.right - rect.width()).coerceAtLeast(usable.left))
+        }
+        var top = rect.top.coerceIn(usable.top, (usable.bottom - barPx).coerceAtLeast(usable.top))
+        var right = minOf(rect.right, usable.right)
+        var bottom = minOf(rect.bottom, usable.bottom)
+        // Size floor after position clamping (a clamped edge may have shrunk it).
+        if (right - left < minPx) right = minOf(left + minPx, usable.right)
+        if (bottom - top < minPx) bottom = minOf(top + minPx, usable.bottom)
+        if (right - left < minPx) left = maxOf(right - minPx, usable.left)
+        if (bottom - top < minPx) top = maxOf(bottom - minPx, usable.top)
+        return Rect(left, top, right, bottom)
+    }
+
+    /** Snap [params] to a usable edge when [rect] is within [SNAP_DP] of it. */
+    private fun snapToEdge(
+        params: AndroidWindowManager.LayoutParams,
+        rect: Rect,
+        usable: Rect,
+        density: Float,
+    ) {
+        val snapPx = (SNAP_DP * density).toInt()
+        if (kotlin.math.abs(rect.left - usable.left) <= snapPx) {
+            params.x = usable.left
+        } else if (kotlin.math.abs(rect.right - usable.right) <= snapPx) {
+            params.x = usable.right - rect.width()
+        }
+        if (kotlin.math.abs(rect.top - usable.top) <= snapPx) {
+            params.y = usable.top
+        } else if (kotlin.math.abs(rect.bottom - usable.bottom) <= snapPx) {
+            params.y = usable.bottom - rect.height()
+        }
+    }
+
+    private fun isHalfScreenRect(app: Context, rect: Rect): Boolean {
+        val usable = usableRect(app)
+        return rect.width() == usable.width() / 2 &&
+            (rect.left == usable.left || rect.right == usable.right)
+    }
+
+    /**
      * VD size for a window rect: full width, height minus title bar (if visible).
      * The title bar sits outside the content.
      */
@@ -614,6 +761,24 @@ object WindowManager : WindowHost {
                     rec.isMaximized,
                 )
             }
+    }
+
+    /** All windows for the panel, topmost first, with full state for rows. */
+    fun getPanelWindows(): List<FreeWindowNotification.ParkedApp> {
+        val app = appContext ?: return emptyList()
+        val order = synchronized(zOrder) { zOrder.reversed() }
+        return order.mapNotNull { id ->
+            windows[id]?.let { rec ->
+                FreeWindowNotification.ParkedApp(
+                    windowId = rec.id,
+                    label = appLabel(app, rec.componentName),
+                    isMaximized = rec.isMaximized,
+                    component = rec.componentName,
+                    isParked = rec.isParked,
+                    isMuted = rec.isMuted,
+                )
+            }
+        }
     }
 
     private fun updateNotification() {

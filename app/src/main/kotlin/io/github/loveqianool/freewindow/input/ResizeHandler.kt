@@ -16,9 +16,14 @@ import kotlin.math.hypot
  * Resize gesture for a free window.
  *
  * - A 36dp invisible touch area sits at the window's bottom-right corner.
+ *   It carries a faint "◢" corner mark that is only shown while the window
+ *   is focused (see [setIndicatorVisible]); the mark is a separate child
+ *   view, so hiding it never disables the touch area.
  * - While dragging, a bright-cyan (#FF00E5FF) 3dp dashed preview rect is
  *   shown in an independent system window (TYPE_PHONE,
  *   NOT_FOCUSABLE|NOT_TOUCHABLE); the window itself is not resized yet.
+ *   The preview is clamped to the screen, and the commit is clamped again
+ *   by the host to the usable area.
  * - On release the new rect is committed through [Callback.onResizeCommit];
  *   the host then resizes the VirtualDisplay and re-lays out the content.
  * - A plain tap (no drag) on the area is reported via
@@ -51,6 +56,12 @@ class ResizeHandler(
     private fun dp(v: Int) = (v * density).toInt()
 
     private var previewView: View? = null
+    private var indicatorView: View? = null
+
+    /** Show/hide the faint corner mark; the touch area itself is unaffected. */
+    fun setIndicatorVisible(visible: Boolean) {
+        indicatorView?.visibility = if (visible) View.VISIBLE else View.INVISIBLE
+    }
 
     private var startRect: Rect? = null
     private var lastPreview: Rect? = null
@@ -78,8 +89,13 @@ class ResizeHandler(
                 }
                 val start = startRect ?: return@OnTouchListener true
                 val minPx = dp(MIN_SIZE_DP)
-                val newW = (start.width() + event.rawX - startRawX).toInt().coerceAtLeast(minPx)
-                val newH = (start.height() + event.rawY - startRawY).toInt().coerceAtLeast(minPx)
+                val metrics = context.resources.displayMetrics
+                val maxW = (metrics.widthPixels - start.left).coerceAtLeast(minPx)
+                val maxH = (metrics.heightPixels - start.top).coerceAtLeast(minPx)
+                val newW = (start.width() + event.rawX - startRawX).toInt()
+                    .coerceIn(minPx, maxW)
+                val newH = (start.height() + event.rawY - startRawY).toInt()
+                    .coerceIn(minPx, maxH)
                 val preview = Rect(start.left, start.top, start.left + newW, start.top + newH)
                 lastPreview = Rect(preview)
                 showPreview(preview)
@@ -99,16 +115,32 @@ class ResizeHandler(
     }
 
     /**
-     * Creates the invisible 36dp handle view. The host adds it to the
-     * window's bottom-right corner and attaches [touchListener].
+     * Creates the 36dp handle view. The host adds it to the window's
+     * bottom-right corner. The container itself is the touch target and
+     * stays invisible; the "◢" mark inside it is shown only while focused.
      */
-    fun createHandleView(): View = View(context).apply {
-        layoutParams = android.widget.FrameLayout.LayoutParams(
-            dp(HANDLE_DP),
-            dp(HANDLE_DP),
-            Gravity.BOTTOM or Gravity.END,
-        )
-        setOnTouchListener(touchListener)
+    fun createHandleView(): View {
+        val indicator = android.widget.TextView(context).apply {
+            text = "◢"
+            textSize = 14f
+            setTextColor(0x66FFFFFF)
+            gravity = Gravity.BOTTOM or Gravity.END
+            visibility = View.INVISIBLE
+            layoutParams = android.widget.FrameLayout.LayoutParams(
+                android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+            )
+        }
+        indicatorView = indicator
+        return android.widget.FrameLayout(context).apply {
+            layoutParams = android.widget.FrameLayout.LayoutParams(
+                dp(HANDLE_DP),
+                dp(HANDLE_DP),
+                Gravity.BOTTOM or Gravity.END,
+            )
+            addView(indicator)
+            setOnTouchListener(touchListener)
+        }
     }
 
     private fun showPreview(rect: Rect) {

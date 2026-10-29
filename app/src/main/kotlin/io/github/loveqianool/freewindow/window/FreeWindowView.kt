@@ -45,11 +45,6 @@ class FreeWindowView @JvmOverloads constructor(
     private val textureView = TextureView(context)
     private val titleBar = TitleBar(context, windowId, host)
 
-    /** Armed by tapping the resize area; next tap on top-left toggles title bar. */
-    private var titleToggleArmed = false
-
-    private var isMaximized = false
-
     private var resizeHandleView: View? = null
 
     /** Ensures touch events are forwarded in order (DOWN before MOVE/UP). */
@@ -82,10 +77,9 @@ class FreeWindowView @JvmOverloads constructor(
             override fun currentRect(): android.graphics.Rect = host.currentRect(windowId)
             override fun onResizeCommit(rect: android.graphics.Rect) =
                 host.onResizeCommit(windowId, rect)
-            override fun onResizeAreaTap() {
-                titleToggleArmed = true
-                postDelayed({ titleToggleArmed = false }, 2000)
-            }
+            // Tap on the resize area no longer arms anything: the top-left
+            // tap below toggles the title bar on its own, in both modes.
+            override fun onResizeAreaTap() = Unit
         },
     )
 
@@ -141,6 +135,7 @@ class FreeWindowView @JvmOverloads constructor(
                 // focusable; otherwise the tap feels laggy.
                 val needDelay = !ImeHelper.isFocusable(this@FreeWindowView)
                 ImeHelper.setFocusable(this@FreeWindowView, true)
+                resizeHandler.setIndicatorVisible(true)
                 host.onTap(windowId)
                 if (did >= 0) {
                     forwardOrdered(event, did, if (needDelay) 233L else 0L)
@@ -165,27 +160,15 @@ class FreeWindowView @JvmOverloads constructor(
             },
         )
 
-        // Top-left tap area for title-bar toggle.
-        // - Maximized: double-tap toggles (anti-accidental).
-        // - Windowed: two-tap gesture (resize area first, then here).
+        // Top-left tap area for title-bar toggle: one tap, in both modes.
+        // The 48dp zone already sits above the app content (windowed: it
+        // covers title-bar space; maximized: it already swallowed taps
+        // there), so a single tap costs no extra accidental-tap risk
+        // versus the old double-tap / two-tap gestures.
         val toggleSize = (48 * density).toInt()
-        var lastToggleTap = 0L
         val toggleView = View(context).apply {
             isClickable = true
-            setOnClickListener {
-                if (isMaximized) {
-                    val now = System.currentTimeMillis()
-                    if (now - lastToggleTap < 400) {
-                        lastToggleTap = 0
-                        toggleTitleBar()
-                    } else {
-                        lastToggleTap = now
-                    }
-                } else if (titleToggleArmed) {
-                    titleToggleArmed = false
-                    toggleTitleBar()
-                }
-            }
+            setOnClickListener { toggleTitleBar() }
         }
         addView(
             toggleView,
@@ -198,6 +181,7 @@ class FreeWindowView @JvmOverloads constructor(
         setOnTouchListener { _, event ->
             if (event.actionMasked == MotionEvent.ACTION_OUTSIDE) {
                 ImeHelper.setFocusable(this@FreeWindowView, false)
+                resizeHandler.setIndicatorVisible(false)
                 true
             } else {
                 false
@@ -206,7 +190,7 @@ class FreeWindowView @JvmOverloads constructor(
         Log.i(TAG, "FreeWindowView created window=$windowId")
     }
 
-    /** Toggles title bar visibility (for maximized mode gesture). */
+    /** Toggles title bar visibility (top-left single tap, both modes). */
     fun toggleTitleBar() {
         val isVisible = titleBar.visibility == View.VISIBLE
         titleBar.visibility = if (isVisible) View.GONE else View.VISIBLE
@@ -221,11 +205,9 @@ class FreeWindowView @JvmOverloads constructor(
     fun isTitleBarVisible(): Boolean = titleBar.visibility == View.VISIBLE
 
     fun setMaximized(maximized: Boolean) {
-        isMaximized = maximized
         titleBar.setMaximized(maximized)
         titleBar.visibility = if (maximized) View.GONE else View.VISIBLE
         resizeHandleView?.visibility = if (maximized) View.GONE else View.VISIBLE
-        titleToggleArmed = false
         // Content size changed (bar gone/shown); host resizes the VD.
         host.onContentSizeChanged(windowId)
     }
