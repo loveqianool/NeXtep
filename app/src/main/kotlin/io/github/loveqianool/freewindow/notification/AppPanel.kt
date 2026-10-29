@@ -224,32 +224,31 @@ class AppPanel(
      * is taller than [WINDOW_SECTION_MAX_HEIGHT_DP], cap the scroll area
      * to that height and let the section scroll internally; otherwise let
      * it wrap its content so a short section does not waste space.
-     * Measured after layout (hence the post): before the first layout pass
-     * the box height is 0 and there is nothing to cap yet.
+     * Measured synchronously, not via post: a posted read can run before
+     * the new layout pass and see the previous rows' height, which caps
+     * the section at the wrong value until the next refresh. The width
+     * must be exact (label wrapping depends on it): dialog width is 85%
+     * of the screen, minus the root's 16dp padding on each side.
      */
     private fun capWindowSection() {
         val scroll = windowScroll ?: return
         val box = windowContainer ?: return
-        scroll.post {
-            if (!isShowing()) return@post
-            val contentHeight = box.height
-            // The first post can run on attach, before layout, when the
-            // height is still 0 even though rows exist — retry then,
-            // instead of missing the cap until the next refresh. An
-            // empty section (no children) needs no cap at all.
-            if (contentHeight == 0) {
-                if (box.childCount > 0) scroll.post { capWindowSection() }
-                return@post
-            }
-            val cap = dp(WINDOW_SECTION_MAX_HEIGHT_DP)
-            val params = scroll.layoutParams
-            val target =
-                if (contentHeight > cap) cap
-                else ViewGroup.LayoutParams.WRAP_CONTENT
-            if (params.height != target) {
-                params.height = target
-                scroll.layoutParams = params
-            }
+        val dialogWidth = (context.resources.displayMetrics.widthPixels * 0.85).toInt()
+        val widthSpec = View.MeasureSpec.makeMeasureSpec(
+            dialogWidth - dp(32),
+            View.MeasureSpec.EXACTLY,
+        )
+        val heightSpec = View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
+        box.measure(widthSpec, heightSpec)
+        val contentHeight = box.measuredHeight
+        val cap = dp(WINDOW_SECTION_MAX_HEIGHT_DP)
+        val params = scroll.layoutParams
+        val target =
+            if (contentHeight > cap) cap
+            else ViewGroup.LayoutParams.WRAP_CONTENT
+        if (params.height != target) {
+            params.height = target
+            scroll.layoutParams = params
         }
     }
 
