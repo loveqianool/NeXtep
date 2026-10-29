@@ -89,6 +89,15 @@ object FreeWindowNotification {
     private var receiverRegistered = false
 
     /**
+     * The show-panel and exit intents never change (no extras, fixed
+     * request codes), so cache them instead of re-creating a PendingIntent
+     * (an IPC each) on every notification rebuild. Per-window actions
+     * still build per window: their extras and action vary.
+     */
+    private var showPanelIntent: PendingIntent? = null
+    private var exitIntent: PendingIntent? = null
+
+    /**
      * Show the persistent notification and register the action receiver.
      * Safe to call multiple times.
      */
@@ -138,7 +147,10 @@ object FreeWindowNotification {
                 if (parkedApps.isEmpty()) "点击打开应用面板"
                 else "后台 ${parkedApps.size} 个应用，点击切换",
             )
-            .setContentIntent(broadcastIntent(context, ACTION_SHOW_PANEL, requestCode = 1, null))
+            .setContentIntent(
+                showPanelIntent ?: broadcastIntent(context, ACTION_SHOW_PANEL, requestCode = 1, null)
+                    .also { showPanelIntent = it },
+            )
             .setStyle(style)
             .setOngoing(true)
             .setShowWhen(false)
@@ -163,7 +175,8 @@ object FreeWindowNotification {
             Notification.Action.Builder(
                 null,
                 "关闭全部",
-                broadcastIntent(context, ACTION_EXIT, requestCode = 2, null),
+                exitIntent ?: broadcastIntent(context, ACTION_EXIT, requestCode = 2, null)
+                    .also { exitIntent = it },
             ).build(),
         )
 

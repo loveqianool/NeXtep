@@ -10,7 +10,6 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
-import kotlin.math.hypot
 
 /**
  * Resize gesture for a free window.
@@ -55,6 +54,11 @@ class ResizeHandler(
     private val density = context.resources.displayMetrics.density
     private fun dp(v: Int) = (v * density).toInt()
 
+    // Precomputed once: density does not change for a handle's lifetime,
+    // and these were recomputed on every MOVE before.
+    private val minPx = dp(MIN_SIZE_DP)
+    private val tapSlopPxSquared = dp(TAP_SLOP_DP).let { it * it }.toFloat()
+
     private var previewView: View? = null
     private var indicatorView: View? = null
 
@@ -64,7 +68,8 @@ class ResizeHandler(
     }
 
     private var startRect: Rect? = null
-    private var lastPreview: Rect? = null
+    /** Reused across MOVEs; only the UP commit copies it (once per gesture). */
+    private val previewRect = Rect()
     private var startRawX = 0f
     private var startRawY = 0f
     private var downX = 0f
@@ -76,7 +81,6 @@ class ResizeHandler(
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 startRect = Rect(callback.currentRect())
-                lastPreview = null
                 startRawX = event.rawX
                 startRawY = event.rawY
                 downX = event.rawX
@@ -84,11 +88,13 @@ class ResizeHandler(
                 moved = false
             }
             MotionEvent.ACTION_MOVE -> {
-                if (!moved && hypot(event.rawX - downX, event.rawY - downY) > dp(TAP_SLOP_DP)) {
-                    moved = true
+                // Squared distance: same threshold as hypot(), no sqrt per MOVE.
+                if (!moved) {
+                    val dx = event.rawX - downX
+                    val dy = event.rawY - downY
+                    if (dx * dx + dy * dy > tapSlopPxSquared) moved = true
                 }
                 val start = startRect ?: return@OnTouchListener true
-                val minPx = dp(MIN_SIZE_DP)
                 val metrics = context.resources.displayMetrics
                 val maxW = (metrics.widthPixels - start.left).coerceAtLeast(minPx)
                 val maxH = (metrics.heightPixels - start.top).coerceAtLeast(minPx)
@@ -96,19 +102,20 @@ class ResizeHandler(
                     .coerceIn(minPx, maxW)
                 val newH = (start.height() + event.rawY - startRawY).toInt()
                     .coerceIn(minPx, maxH)
-                val preview = Rect(start.left, start.top, start.left + newW, start.top + newH)
-                lastPreview = Rect(preview)
-                showPreview(preview)
+                previewRect.set(start.left, start.top, start.left + newW, start.top + newH)
+                showPreview(previewRect)
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 hidePreview()
                 if (!moved && event.actionMasked == MotionEvent.ACTION_UP) {
                     callback.onResizeAreaTap()
-                } else {
-                    lastPreview?.let { callback.onResizeCommit(Rect(it)) }
+                } else if (moved) {
+                    // Host's clampRect returns a new Rect and never mutates
+                    // its input, but copy once here so the reused previewRect
+                    // can never leak into the host's state.
+                    callback.onResizeCommit(Rect(previewRect))
                 }
                 startRect = null
-                lastPreview = null
             }
         }
         true

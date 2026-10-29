@@ -56,6 +56,8 @@ class AppPanel(
         val component: ComponentName,
         val label: String,
         val resolveInfo: android.content.pm.ResolveInfo,
+        /** Lowercased once at query time; search/sort must not redo it per app. */
+        val lowerLabel: String = label.lowercase(),
     )
 
     /** One app row: the entry plus its "已打开" state at render time. */
@@ -278,7 +280,7 @@ class AppPanel(
                         ri, // Icon loaded lazily in row()
                     )
                 }
-                .sortedBy { it.label.lowercase() }
+                .sortedBy { it.lowerLabel }
         } catch (e: Exception) {
             Log.i(TAG, "query apps failed: ${e.message}")
             emptyList()
@@ -349,7 +351,7 @@ class AppPanel(
         val q = query.trim().lowercase()
         val filtered =
             if (q.isEmpty()) allApps
-            else allApps.filter { it.label.lowercase().contains(q) }
+            else allApps.filter { it.lowerLabel.contains(q) }
         if (filtered.isEmpty()) {
             emptyView.text = if (allApps.isEmpty()) "加载中…" else "没有匹配的应用"
             emptyView.visibility = View.VISIBLE
