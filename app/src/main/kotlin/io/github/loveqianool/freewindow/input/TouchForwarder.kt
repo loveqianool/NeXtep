@@ -61,6 +61,25 @@ object TouchForwarder {
     }
 
     /**
+     * Inject [event] as-is, without copying it. The caller owns [event] and
+     * must recycle it after this returns. Use this only when the event is
+     * already a caller-owned copy (see [FreeWindowView.forwardOrdered]);
+     * async inject copies internally before returning, exactly as it does
+     * for the copy made by [forward], so recycling after return is safe.
+     */
+    fun forwardOwned(event: MotionEvent, displayId: Int): Boolean {
+        val manager = inputManager ?: return false
+        val inject = injectMethod ?: return false
+        if (!stampDisplayId(event, displayId)) return false
+        return try {
+            inject.invoke(manager, event, INJECT_INPUT_EVENT_MODE_ASYNC) as? Boolean ?: false
+        } catch (e: Throwable) {
+            Log.i(TAG, "injectInputEvent failed: ${e.message}")
+            false
+        }
+    }
+
+    /**
      * Stamps [displayId] on a copy of [event] and injects it asynchronously
      * into the input system. Returns true if the event was accepted.
      *

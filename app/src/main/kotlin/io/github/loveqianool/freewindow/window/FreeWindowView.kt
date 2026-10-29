@@ -54,7 +54,10 @@ class FreeWindowView @JvmOverloads constructor(
     /**
      * Forwards a touch event after [extraDelay] ms, ensuring it is not
      * delivered before any previously queued event. The framework owns
-     * [event] (pooled); we forward a copy.
+     * [event] (pooled); we forward a copy. That copy is already caller-owned,
+     * so it goes through [TouchForwarder.forwardOwned] — the old path ran it
+     * through [TouchForwarder.forward] as well, which obtained a second copy
+     * on every touch event.
      */
     private fun forwardOrdered(event: android.view.MotionEvent, did: Int, extraDelay: Long) {
         val copy = android.view.MotionEvent.obtain(event)
@@ -64,7 +67,7 @@ class FreeWindowView @JvmOverloads constructor(
         )
         lastForwardAt = at
         touchHandler.postAtTime({
-            TouchForwarder.forward(copy, did)
+            TouchForwarder.forwardOwned(copy, did)
             copy.recycle()
         }, at)
     }

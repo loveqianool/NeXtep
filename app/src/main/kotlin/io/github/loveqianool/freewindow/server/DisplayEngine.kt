@@ -13,6 +13,19 @@ import android.view.Surface
 class DisplayEngine(private val context: Context) {
     private val displays = mutableMapOf<Int, VirtualDisplay>()
 
+    /**
+     * VirtualDisplay flags never change at runtime; resolve them once
+     * instead of reflecting three fields on every display creation.
+     */
+    private val displayFlags: Int by lazy {
+        var flags = DisplayManager.VIRTUAL_DISPLAY_FLAG_PRESENTATION
+        // TRUSTED, OWN_FOCUS etc. may be hidden; read via reflection.
+        flags = flags or readFlag("VIRTUAL_DISPLAY_FLAG_TRUSTED")
+        flags = flags or readFlag("VIRTUAL_DISPLAY_FLAG_OWN_FOCUS")
+        flags = flags or readFlag("VIRTUAL_DISPLAY_FLAG_OWN_DISPLAY_GROUP")
+        flags
+    }
+
     fun create(id: Int, width: Int, height: Int, dpi: Int, surface: Surface): VirtualDisplay? {
         return create(id, width, height, dpi, surface, releaseFirst = true)
     }
@@ -37,7 +50,7 @@ class DisplayEngine(private val context: Context) {
             return null
         }
         return try {
-            val vd = dm.createVirtualDisplay("$PREFIX$id", width, height, dpi, surface, resolveFlags())
+            val vd = dm.createVirtualDisplay("$PREFIX$id", width, height, dpi, surface, displayFlags)
             if (vd != null) {
                 displays[id] = vd
                 Log.i(TAG, "Created display id=$id ${width}x${height} dpi=$dpi")
@@ -62,17 +75,9 @@ class DisplayEngine(private val context: Context) {
         }
     }
 
-    private fun resolveFlags(): Int {
-        // OWN_CONTENT_ONLY removed: with LOCAL IME policy the keyboard shows
-        // inside the window, so the virtual display needs to allow system
-        // windows (IME).
-        var flags = DisplayManager.VIRTUAL_DISPLAY_FLAG_PRESENTATION
-        // TRUSTED, OWN_FOCUS etc. may be hidden; read via reflection.
-        flags = flags or readFlag("VIRTUAL_DISPLAY_FLAG_TRUSTED")
-        flags = flags or readFlag("VIRTUAL_DISPLAY_FLAG_OWN_FOCUS")
-        flags = flags or readFlag("VIRTUAL_DISPLAY_FLAG_OWN_DISPLAY_GROUP")
-        return flags
-    }
+    // OWN_CONTENT_ONLY removed: with LOCAL IME policy the keyboard shows
+    // inside the window, so the virtual display needs to allow system
+    // windows (IME). Flag resolution lives in displayFlags above.
 
     private fun readFlag(name: String): Int = try {
         DisplayManager::class.java.getDeclaredField(name)

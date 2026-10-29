@@ -247,6 +247,15 @@ class AppPanel(
         }
     }
 
+    /**
+     * A fresh instance sharing the cached bitmap/state, so no ImageView
+     * ever mutates the Drawable stored in the cache (or one another view
+     * is showing). Falls back to the original when the drawable has no
+     * constant state. Sharing the bitmap is still cheap — no re-decode.
+     */
+    private fun drawableCopy(drawable: Drawable): Drawable =
+        drawable.constantState?.newDrawable(context.resources) ?: drawable
+
     /** Shared icon loader: cache hit is synchronous, misses decode on a bg thread. */
     private fun loadIconCached(
         component: ComponentName,
@@ -255,7 +264,7 @@ class AppPanel(
     ) {
         val cached = iconCache.get(component)
         if (cached != null) {
-            imageView.setImageDrawable(cached)
+            imageView.setImageDrawable(drawableCopy(cached))
             return
         }
         // Tag guards against recycled views (not a RecyclerView, but cheap).
@@ -266,10 +275,11 @@ class AppPanel(
             } catch (e: Throwable) {
                 null
             } ?: return@execute
+            // The cache keeps the template; views only ever get copies.
             iconCache.put(component, icon)
             mainHandler.post {
                 if (imageView.tag == component) {
-                    imageView.setImageDrawable(icon)
+                    imageView.setImageDrawable(drawableCopy(icon))
                 }
             }
         }

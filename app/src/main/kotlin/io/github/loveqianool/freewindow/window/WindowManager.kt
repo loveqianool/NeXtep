@@ -57,6 +57,8 @@ object WindowManager : WindowHost {
     private var lastNotifiedBackground: List<FreeWindowNotification.ParkedApp>? = null
     /** True while exit() is closing windows one by one. */
     private var suppressNotification = false
+    /** Window ids with a content-size VD resize already queued. */
+    private val pendingContentResize = mutableSetOf<Int>()
     private val zOrder = mutableListOf<Int>()
     private val nextId = AtomicInteger(1)
 
@@ -377,8 +379,14 @@ object WindowManager : WindowHost {
     override fun onContentSizeChanged(id: Int) {
         val rec = windows[id] ?: return
         val app = appContext ?: return
+        // Coalesce: rapid toggles (title bar show/hide + maximize) used to
+        // queue one VD resize per call. A pending resize reads contentSize()
+        // at execution time, so a second call before it runs is already
+        // covered by the first — skip it instead of queueing another.
+        if (!pendingContentResize.add(id)) return
         // Post to let the layout settle; contentSize() reads measured dims.
         handler.post {
+            pendingContentResize.remove(id)
             val content = rec.view.contentSize()
             val vd = displays[id] ?: return@post
             runCatching {
