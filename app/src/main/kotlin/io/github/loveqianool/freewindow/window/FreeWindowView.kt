@@ -205,6 +205,17 @@ class FreeWindowView @JvmOverloads constructor(
         Log.i(TAG, "FreeWindowView created window=$windowId")
     }
 
+    /**
+     * Rotation (or any configuration change) changes the usable area, but
+     * window rects are stored in old screen coordinates: without a
+     * re-clamp, a title bar can end up off-screen and undraggable.
+     * Attached system windows receive this dispatch from ViewRootImpl.
+     */
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        super.onConfigurationChanged(newConfig)
+        host.onConfigurationChanged(windowId)
+    }
+
     /** Toggles title bar visibility (top-left single tap, both modes). */
     fun toggleTitleBar() {
         val isVisible = titleBar.visibility == View.VISIBLE

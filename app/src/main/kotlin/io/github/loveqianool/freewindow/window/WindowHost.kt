@@ -33,4 +33,7 @@ interface WindowHost {
 
     /** Title bar visibility changed; content size changed, resize the VD. */
     fun onContentSizeChanged(id: Int)
+
+    /** Device configuration changed (e.g. rotation): re-clamp to the new usable area. */
+    fun onConfigurationChanged(id: Int)
 }

@@ -264,6 +264,33 @@ object WindowManager : WindowHost {
         return usableRect(app)
     }
 
+    override fun onConfigurationChanged(id: Int) {
+        reclampWindow(id)
+    }
+
+    /** Re-clamp every window to the current usable area (panel-open safety net). */
+    fun reclampAllWindows() {
+        val app = appContext ?: return
+        windows.keys.toList().forEach { id ->
+            val rec = windows[id] ?: return@forEach
+            if (rec.isMaximized) {
+                applyRect(id, usableRect(app))
+            } else {
+                applyRect(id, currentRect(rec.view))
+            }
+        }
+    }
+
+    private fun reclampWindow(id: Int) {
+        val app = appContext ?: return
+        val rec = windows[id] ?: return
+        if (rec.isMaximized) {
+            applyRect(id, usableRect(app))
+        } else {
+            applyRect(id, currentRect(rec.view))
+        }
+    }
+
     override fun onTap(id: Int) = bringToFront(id)
 
     override fun onPark(id: Int) = parkWindow(id)

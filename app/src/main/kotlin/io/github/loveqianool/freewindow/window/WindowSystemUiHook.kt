@@ -43,6 +43,11 @@ object WindowSystemUiHook {
                         Log.i(TAG, "panel already showing, ignore")
                         return
                     }
+                    // Safety net for rotation: if the view configuration
+                    // dispatch did not fire for some window, opening the
+                    // panel (reachable via the notification regardless of
+                    // window positions) pulls every window back in bounds.
+                    WindowManager.reclampAllWindows()
                     try {
                         val ctx = app ?: return
                         val panel = AppPanel(

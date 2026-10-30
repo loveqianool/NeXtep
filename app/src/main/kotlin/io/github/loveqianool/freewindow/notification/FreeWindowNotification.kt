@@ -9,6 +9,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.util.Log
+import io.github.loveqianool.freewindow.R
 
 /**
  * Persistent notification for the free-window module.
@@ -153,7 +154,7 @@ object FreeWindowNotification {
         }
 
         val builder = Notification.Builder(context, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setSmallIcon(R.drawable.ic_freewindow)
             .setContentTitle("FreeWindow")
             .setContentText(
                 if (parkedApps.isEmpty()) "点击打开应用面板"

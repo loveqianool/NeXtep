@@ -244,19 +244,24 @@ class AppPanel(
 
     /**
      * Keep the window section from squeezing the app list: if its content
-     * is taller than [WINDOW_SECTION_MAX_HEIGHT_DP], cap the scroll area
-     * to that height and let the section scroll internally; otherwise let
-     * it wrap its content so a short section does not waste space.
+     * is taller than the cap, cap the scroll area to that height and let
+     * the section scroll internally; otherwise let it wrap its content
+     * so a short section does not waste space.
      * Measured synchronously, not via post: a posted read can run before
      * the new layout pass and see the previous rows' height, which caps
      * the section at the wrong value until the next refresh. The width
      * must be exact (label wrapping depends on it): dialog width is 85%
      * of the screen, minus the root's 16dp padding on each side.
+     * The cap is relative, not a fixed 240dp: in landscape the dialog
+     * is only ~70% of a short screen height, so a fixed cap would leave
+     * the app list with almost no space.
      */
     private fun capWindowSection() {
         val scroll = windowScroll ?: return
         val box = windowContainer ?: return
-        val dialogWidth = (context.resources.displayMetrics.widthPixels * 0.85).toInt()
+        val metrics = context.resources.displayMetrics
+        val dialogWidth = (metrics.widthPixels * 0.85).toInt()
+        val dialogHeight = (metrics.heightPixels * 0.7).toInt()
         val widthSpec = View.MeasureSpec.makeMeasureSpec(
             dialogWidth - dp(32),
             View.MeasureSpec.EXACTLY,
@@ -264,7 +269,7 @@ class AppPanel(
         val heightSpec = View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
         box.measure(widthSpec, heightSpec)
         val contentHeight = box.measuredHeight
-        val cap = dp(WINDOW_SECTION_MAX_HEIGHT_DP)
+        val cap = minOf(dp(WINDOW_SECTION_MAX_HEIGHT_DP), (dialogHeight * 0.4).toInt())
         val params = scroll.layoutParams
         val target =
             if (contentHeight > cap) cap
