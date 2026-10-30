@@ -198,6 +198,10 @@ class AppPanel(
             val metrics = context.resources.displayMetrics
             setLayout((metrics.widthPixels * 0.85).toInt(), (metrics.heightPixels * 0.7).toInt())
             setGravity(Gravity.CENTER)
+            // The search box is the first focusable view; without this,
+            // the keyboard can pop up on its own when the panel opens and
+            // cover half the list. Only show it when the user taps search.
+            setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_HIDDEN)
         }
 
         this.dialog = dialog
