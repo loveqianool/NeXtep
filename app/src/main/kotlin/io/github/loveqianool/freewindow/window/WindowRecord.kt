@@ -17,4 +17,6 @@ data class WindowRecord(
     val isParked: Boolean,
     val isMaximized: Boolean,
     val isMuted: Boolean,
+    /** Collapsed to a draggable icon; the VD keeps its old size (see collapseWindow). */
+    val isCollapsed: Boolean = false,
 )

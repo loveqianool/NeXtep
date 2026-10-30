@@ -55,6 +55,7 @@ object FreeWindowNotification {
         val component: android.content.ComponentName? = null,
         val isParked: Boolean = false,
         val isMuted: Boolean = false,
+        val isCollapsed: Boolean = false,
     )
 
     interface Listener {

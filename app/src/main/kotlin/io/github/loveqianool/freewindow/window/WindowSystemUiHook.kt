@@ -58,7 +58,10 @@ object WindowSystemUiHook {
                                 // opening a duplicate.
                                 val existing = WindowManager.findWindowId(component)
                                 if (existing != null) {
-                                    WindowManager.unparkWindow(existing)
+                                    // restoreWindow (not a bare unpark) so a
+                                    // collapsed window expands instead of
+                                    // just showing its icon again.
+                                    WindowManager.restoreWindow(existing)
                                 } else if (WindowManager.isAtLimit()) {
                                     Toast.makeText(
                                         ctx,

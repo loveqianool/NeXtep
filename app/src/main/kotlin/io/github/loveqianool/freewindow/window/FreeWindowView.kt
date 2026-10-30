@@ -9,11 +9,14 @@ import android.view.MotionEvent
 import android.view.Surface
 import android.view.TextureView
 import android.view.View
+import android.view.ViewConfiguration
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.TextView
 import io.github.loveqianool.freewindow.input.ImeHelper
 import io.github.loveqianool.freewindow.input.ResizeHandler
 import io.github.loveqianool.freewindow.input.TouchForwarder
+import kotlin.math.hypot
 
 /**
  * A free window: vertical stack of [TitleBar] (outside, on top) + [TextureView]
@@ -46,6 +49,16 @@ class FreeWindowView @JvmOverloads constructor(
     private val titleBar = TitleBar(context, windowId, host)
 
     private var resizeHandleView: View? = null
+    private var contentLayout: LinearLayout? = null
+    private var toggleView: View? = null
+    private var collapseIconView: TextView? = null
+
+    /** True while collapsed to the icon: only the icon view is visible. */
+    private var collapsed = false
+    private var iconLastRawX = 0f
+    private var iconLastRawY = 0f
+    private var iconDragging = false
+    private val iconTouchSlop = ViewConfiguration.get(context).scaledTouchSlop
 
     /** Ensures touch events are forwarded in order (DOWN before MOVE/UP). */
     private var lastForwardAt = 0L
@@ -193,6 +206,12 @@ class FreeWindowView @JvmOverloads constructor(
             },
         )
 
+        // Keep field references for setCollapsed(): the local views above
+        // are the same instances; the toggle is hidden while collapsed so
+        // it cannot swallow taps meant for the collapse icon.
+        this.contentLayout = contentLayout
+        this.toggleView = toggleView
+
         // Taps outside the window: drop focusability.
         setOnTouchListener { _, event ->
             if (event.actionMasked == MotionEvent.ACTION_OUTSIDE) {
@@ -239,6 +258,90 @@ class FreeWindowView @JvmOverloads constructor(
         host.onContentSizeChanged(windowId)
     }
 
+    fun isCollapsed(): Boolean = collapsed
+
+    /**
+     * Collapse to just the icon, or restore the full window.
+     *
+     * Collapsing only swaps visibility: the TextureView (and its VD) is
+     * untouched, so the app keeps its layout and does not re-layout to a
+     * 48dp window. The host shrinks the system window rect to the icon
+     * size without resizing the VD, and restores the saved rect on expand.
+     * Collapse is only reachable from a windowed title bar, so expanding
+     * always returns to a windowed window (title bar visible, handle on).
+     */
+    fun setCollapsed(collapsed: Boolean) {
+        this.collapsed = collapsed
+        if (collapsed) {
+            ensureCollapseIcon()
+            contentLayout?.visibility = View.GONE
+            resizeHandleView?.visibility = View.GONE
+            toggleView?.visibility = View.GONE
+            collapseIconView?.visibility = View.VISIBLE
+        } else {
+            collapseIconView?.visibility = View.GONE
+            contentLayout?.visibility = View.VISIBLE
+            resizeHandleView?.visibility = View.VISIBLE
+            toggleView?.visibility = View.VISIBLE
+        }
+        Log.i(TAG, "collapsed window=$windowId collapsed=$collapsed")
+    }
+
+    private fun ensureCollapseIcon() {
+        if (collapseIconView != null) return
+        val icon = TextView(context).apply {
+            text = "🗕"
+            contentDescription = "点击还原窗口"
+            textSize = 20f
+            setTextColor(android.graphics.Color.WHITE)
+            gravity = Gravity.CENTER
+            setBackgroundColor(0x99000000.toInt())
+            setOnTouchListener { _, event ->
+                when (event.actionMasked) {
+                    MotionEvent.ACTION_DOWN -> {
+                        iconLastRawX = event.rawX
+                        iconLastRawY = event.rawY
+                        iconDragging = false
+                        true
+                    }
+                    MotionEvent.ACTION_MOVE -> {
+                        val dx = event.rawX - iconLastRawX
+                        val dy = event.rawY - iconLastRawY
+                        if (!iconDragging && hypot(dx, dy) > iconTouchSlop) {
+                            iconDragging = true
+                        }
+                        if (iconDragging) {
+                            // Same integer-advance rule as TitleBar: do not
+                            // discard the sub-pixel remainder on slow drags.
+                            val idx = dx.toInt()
+                            val idy = dy.toInt()
+                            host.onMove(windowId, idx, idy)
+                            iconLastRawX += idx
+                            iconLastRawY += idy
+                        }
+                        true
+                    }
+                    MotionEvent.ACTION_UP -> {
+                        // Tap (no drag) restores; a drag just ends here.
+                        if (!iconDragging) host.onExpand(windowId)
+                        iconDragging = false
+                        true
+                    }
+                    MotionEvent.ACTION_CANCEL -> {
+                        iconDragging = false
+                        true
+                    }
+                    else -> true
+                }
+            }
+        }
+        collapseIconView = icon
+        addView(
+            icon,
+            LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT),
+        )
+    }
+
     /**
      * Releases the SurfaceTexture. Call when the window is permanently closed
      * (not on temporary detach like bringToFront). We return true from
@@ -266,5 +369,8 @@ class FreeWindowView @JvmOverloads constructor(
 
         /** Title bar height in dp; content height = window height - this. */
         const val TITLE_BAR_DP = 38
+
+        /** Collapsed window size in dp: just the icon, a 48dp touch target. */
+        const val COLLAPSED_DP = 48
     }
 }

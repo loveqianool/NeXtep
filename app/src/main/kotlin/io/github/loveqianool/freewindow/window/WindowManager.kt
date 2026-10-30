@@ -32,6 +32,9 @@ import java.util.concurrent.atomic.AtomicInteger
  * - [parkWindow]: hide the view (INVISIBLE) — the task keeps running on the
  *   VirtualDisplay, so the app believes it is still in the foreground.
  * - [unparkWindow]: show the view again and bring it to front.
+ * - [collapseWindow]: shrink the window to a draggable 48dp icon; the VD
+ *   keeps its size, so expanding restores the exact window layout.
+ * - [expandCollapsed]: restore a collapsed window to its saved rect.
  * - [toggleMaximize]: fullscreen the window within the usable display area.
  * - [setMuted]: per-window audio mute via AppOps ([WindowMute]).
  */
@@ -39,7 +42,7 @@ object WindowManager : WindowHost {
     private const val TAG = "FreeWindow"
     /** At least this much of a window stays visible, so it can be dragged back. */
     private const val MIN_VISIBLE_DP = 80
-    // Title-bar chrome is 200dp (48dp top-left toggle + 4 x 38dp buttons),
+    // Title-bar chrome is 238dp (48dp top-left toggle + 5 x 38dp buttons),
     // so the minimum must exceed it or a smallest window has no drag area.
     private const val MIN_SIZE_DP = 240
     /** Each window is a VirtualDisplay + Surface + task; cap the count. */
@@ -148,6 +151,58 @@ object WindowManager : WindowHost {
         Log.i(TAG, "closeWindow id=$id")
     }
 
+    /**
+     * Collapse the window to just its icon (48dp, top-left of the old
+     * window). Only visibility and the system-window rect change: the VD
+     * is deliberately NOT resized to the icon size, or the app would
+     * re-layout to 48dp and lose its window layout on restore. The saved
+     * rect is the same slot maximize uses (a collapsed window can never
+     * be maximized at the same time, so they cannot clash).
+     */
+    fun collapseWindow(id: Int) {
+        val rec = windows[id] ?: return
+        if (rec.isCollapsed || rec.isMaximized) return
+        val app = appContext ?: return
+        val params = rec.view.layoutParams as? AndroidWindowManager.LayoutParams ?: return
+        val usable = usableRect(app)
+        val density = app.resources.displayMetrics.density
+        val size = (FreeWindowView.COLLAPSED_DP * density).toInt()
+        synchronized(savedRects) { savedRects[id] = currentRect(rec.view) }
+        rec.view.setCollapsed(true)
+        // Position-only clamp: clampRect() would force the 240dp minimum
+        // size and blow the icon back up to a window.
+        params.width = size
+        params.height = size
+        params.x = params.x.coerceIn(usable.left, (usable.right - size).coerceAtLeast(usable.left))
+        params.y = params.y.coerceIn(usable.top, (usable.bottom - size).coerceAtLeast(usable.top))
+        wm?.updateViewLayout(rec.view, params)
+        windows[id] = rec.copy(isCollapsed = true)
+        Log.i(TAG, "collapseWindow id=$id icon=(${params.x},${params.y})")
+    }
+
+    /** Restore a collapsed window to its saved rect and bring it to front. */
+    fun expandCollapsed(id: Int) {
+        val rec = windows[id] ?: return
+        if (!rec.isCollapsed) return
+        val app = appContext ?: return
+        val rect = synchronized(savedRects) { savedRects.remove(id) } ?: defaultRect(app)
+        // Expand the view first: applyRect() sizes the VD from the view's
+        // title-bar visibility, which is only correct once the content is
+        // back (a collapsed view would size the VD to the icon).
+        rec.view.setCollapsed(false)
+        // A collapsed window can also be parked (park hides the root view
+        // but keeps the collapse state); expanding must clear both, or the
+        // restored window would stay INVISIBLE and still list as background.
+        rec.view.visibility = View.VISIBLE
+        windows[id] = rec.copy(isCollapsed = false, isParked = false)
+        applyRect(id, rect)
+        bringToFront(id)
+        // bringToFront may have closed the window on re-add failure.
+        if (windows[id] == null) return
+        updateNotification()
+        Log.i(TAG, "expandCollapsed id=$id rect=$rect")
+    }
+
     /** Hide the window; the app keeps running on its VirtualDisplay. */
     fun parkWindow(id: Int) {
         val rec = windows[id] ?: return
@@ -172,6 +227,10 @@ object WindowManager : WindowHost {
     }
 
     fun toggleMaximize(id: Int) {
+        // Maximizing a collapsed window must expand it first: applying
+        // the fullscreen rect to a collapsed view would leave a fullscreen
+        // icon (and a VD sized from the collapsed view).
+        if (windows[id]?.isCollapsed == true) expandCollapsed(id)
         val rec = windows[id] ?: return
         val app = appContext ?: return
         if (rec.isMaximized) {
@@ -242,6 +301,12 @@ object WindowManager : WindowHost {
      */
     fun restoreWindow(id: Int) {
         val rec = windows[id] ?: return
+        // Panel row tap / app-list tap on a collapsed window restores it;
+        // a bare unpark would only show the icon again, not the window.
+        if (rec.isCollapsed) {
+            expandCollapsed(id)
+            return
+        }
         if (rec.isMaximized) {
             unparkWindow(id)
             toggleMaximize(id)
@@ -273,7 +338,9 @@ object WindowManager : WindowHost {
         val app = appContext ?: return
         windows.keys.toList().forEach { id ->
             val rec = windows[id] ?: return@forEach
-            if (rec.isMaximized) {
+            if (rec.isCollapsed) {
+                reclampCollapsed(id)
+            } else if (rec.isMaximized) {
                 applyRect(id, usableRect(app))
             } else {
                 applyRect(id, currentRect(rec.view))
@@ -284,14 +351,35 @@ object WindowManager : WindowHost {
     private fun reclampWindow(id: Int) {
         val app = appContext ?: return
         val rec = windows[id] ?: return
-        if (rec.isMaximized) {
+        if (rec.isCollapsed) {
+            reclampCollapsed(id)
+        } else if (rec.isMaximized) {
             applyRect(id, usableRect(app))
         } else {
             applyRect(id, currentRect(rec.view))
         }
     }
 
+    /** Rotation safety net for a collapsed icon: move it back in bounds only. */
+    private fun reclampCollapsed(id: Int) {
+        val rec = windows[id] ?: return
+        val app = appContext ?: return
+        val params = rec.view.layoutParams as? AndroidWindowManager.LayoutParams ?: return
+        val usable = usableRect(app)
+        params.x = params.x.coerceIn(
+            usable.left, (usable.right - params.width).coerceAtLeast(usable.left),
+        )
+        params.y = params.y.coerceIn(
+            usable.top, (usable.bottom - params.height).coerceAtLeast(usable.top),
+        )
+        wm?.updateViewLayout(rec.view, params)
+    }
+
     override fun onTap(id: Int) = bringToFront(id)
+
+    override fun onCollapse(id: Int) = collapseWindow(id)
+
+    override fun onExpand(id: Int) = expandCollapsed(id)
 
     override fun onPark(id: Int) = parkWindow(id)
 
@@ -312,6 +400,18 @@ object WindowManager : WindowHost {
         // Hot path (MOVE fires at touch rate): usableRect() queries
         // WindowMetrics, so compute it once here for the clamp.
         val usable = usableRect(app)
+        if (rec.isCollapsed) {
+            // Icon drag: position only, keep the 48dp size. The normal
+            // clamp below would force the 240dp minimum and re-inflate it.
+            params.x = (params.x + dx).coerceIn(
+                usable.left, (usable.right - params.width).coerceAtLeast(usable.left),
+            )
+            params.y = (params.y + dy).coerceIn(
+                usable.top, (usable.bottom - params.height).coerceAtLeast(usable.top),
+            )
+            wm?.updateViewLayout(rec.view, params)
+            return
+        }
         val density = app.resources.displayMetrics.density
         params.x += dx
         params.y += dy
@@ -331,8 +431,8 @@ object WindowManager : WindowHost {
             Log.i(TAG, "onResizeCommit: no rec for id=$id")
             return
         }
-        if (rec.isMaximized) {
-            Log.i(TAG, "onResizeCommit: maximized, skip")
+        if (rec.isMaximized || rec.isCollapsed) {
+            Log.i(TAG, "onResizeCommit: maximized/collapsed, skip")
             return
         }
         val app = appContext ?: return
@@ -381,6 +481,9 @@ object WindowManager : WindowHost {
 
     override fun onContentSizeChanged(id: Int) {
         val rec = windows[id] ?: return
+        // Never resize the VD while collapsed: contentSize() of a 48dp
+        // icon window would shrink the VD to the icon.
+        if (rec.isCollapsed) return
         val app = appContext ?: return
         // Coalesce: rapid toggles (title bar show/hide + maximize) used to
         // queue one VD resize per call. A pending resize reads contentSize()
@@ -564,6 +667,10 @@ object WindowManager : WindowHost {
         params.width = clamped.width()
         params.height = clamped.height()
         wm?.updateViewLayout(rec.view, params)
+        // Defensive: applyRect() on a collapsed view must never shrink
+        // the VD to the icon size (expandCollapsed clears the flag first,
+        // so a correct call never reaches here collapsed).
+        if (rec.isCollapsed) return
         displays[id]?.let { vd ->
             val (vdW, vdH) = vdSizeForWindow(clamped, rec.view)
             runCatching { vd.resize(vdW, vdH, densityDpi(app)) }
@@ -820,6 +927,7 @@ object WindowManager : WindowHost {
                     component = rec.componentName,
                     isParked = rec.isParked,
                     isMuted = rec.isMuted,
+                    isCollapsed = rec.isCollapsed,
                 )
             }
         }
