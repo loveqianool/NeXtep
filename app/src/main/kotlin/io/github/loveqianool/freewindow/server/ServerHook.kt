@@ -19,14 +19,21 @@ object ServerHook {
     /** Ensures the mute receiver is registered exactly once, from either trigger. */
     private val muteReceiverStarted = java.util.concurrent.atomic.AtomicBoolean(false)
 
+    /** Guarded: load/save run on both the install thread and the receiver thread. */
+    private val mutedFileLock = Any()
+
     private fun loadMuted(): MutableSet<String> =
-        runCatching {
-            mutedFile.readLines().filter { it.isNotBlank() }.toMutableSet()
-        }.getOrDefault(mutableSetOf())
+        synchronized(mutedFileLock) {
+            runCatching {
+                mutedFile.readLines().filter { it.isNotBlank() }.toMutableSet()
+            }.getOrDefault(mutableSetOf())
+        }
 
     private fun saveMuted(s: Set<String>) =
-        runCatching { mutedFile.writeText(s.joinToString("\n")) }
-            .onFailure { Log.w(TAG, "save muted file failed", it) }
+        synchronized(mutedFileLock) {
+            runCatching { mutedFile.writeText(s.joinToString("\n")) }
+                .onFailure { Log.w(TAG, "save muted file failed", it) }
+        }
 
     fun install(module: XposedModule, classLoader: ClassLoader) {
         if (installed) return
@@ -83,7 +90,11 @@ object ServerHook {
      */
     private fun installMuteReceiverOnce(ctx: android.content.Context) {
         if (!muteReceiverStarted.compareAndSet(false, true)) return
-        Thread { installMuteReceiver(ctx) }.start()
+        // Reset on failure: a failed registration must not permanently
+        // block the next trigger (display hook / systemReady) from retrying.
+        Thread {
+            if (!installMuteReceiver(ctx)) muteReceiverStarted.set(false)
+        }.start()
     }
 
     /**
@@ -96,7 +107,8 @@ object ServerHook {
      * Muted packages are persisted; on registration any leftovers from a
      * crash/reboot (where closeWindow never ran) are restored to default.
      */
-    private fun installMuteReceiver(ctx: android.content.Context) {
+    /** Returns true only if the receiver was actually registered. */
+    private fun installMuteReceiver(ctx: android.content.Context): Boolean {
         val thread = android.os.HandlerThread("FreeWindowMute").apply { start() }
         val handler = android.os.Handler(thread.looper)
         val receiver = object : android.content.BroadcastReceiver() {
@@ -132,7 +144,7 @@ object ServerHook {
             Log.i(TAG, "mute receiver registered")
         } catch (e: Throwable) {
             Log.w(TAG, "mute receiver install failed", e)
-            return
+            return false
         }
         // Restore: clear any persistent mute left by a crash/reboot.
         // Separate from registration so a failure here can't break it.
@@ -148,6 +160,8 @@ object ServerHook {
             }
             saveMuted(emptySet())
         }
+        // Leftover restore failure does not fail registration (see above).
+        return true
     }
 
     /** Runs in system_server; has MANAGE_APP_OPS_MODES. */

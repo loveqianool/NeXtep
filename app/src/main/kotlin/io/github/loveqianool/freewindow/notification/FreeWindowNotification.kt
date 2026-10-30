@@ -88,6 +88,9 @@ object FreeWindowNotification {
 
     private var receiverRegistered = false
 
+    /** Channel creation is one IPC; once created it persists for the process. */
+    private var channelEnsured = false
+
     /**
      * The show-panel and exit intents never change (no extras, fixed
      * request codes), so cache them instead of re-creating a PendingIntent
@@ -203,6 +206,7 @@ object FreeWindowNotification {
     }
 
     private fun ensureChannel(context: Context) {
+        if (channelEnsured) return
         val nm = context.getSystemService(NotificationManager::class.java)
         if (nm.getNotificationChannel(CHANNEL_ID) == null) {
             nm.createNotificationChannel(
@@ -215,6 +219,10 @@ object FreeWindowNotification {
                 },
             )
         }
+        // Note: if the user deletes the channel in Settings, it is not
+        // recreated until SystemUI restarts; that is rarer than the IPC
+        // saved on every notification rebuild.
+        channelEnsured = true
     }
 
     private fun registerReceiver(context: Context) {

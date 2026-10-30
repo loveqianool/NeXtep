@@ -93,9 +93,15 @@ class TitleBar @JvmOverloads constructor(
                 val dy = event.rawY - lastRawY
                 if (!dragging && hypot(dx, dy) > touchSlop) dragging = true
                 if (dragging) {
-                    host.onMove(windowId, dx.toInt(), dy.toInt())
-                    lastRawX = event.rawX
-                    lastRawY = event.rawY
+                    // Advance only by the integer pixels actually moved:
+                    // resetting lastRaw to the event position would discard
+                    // the sub-pixel remainder on every MOVE, so a slow drag
+                    // (under 1px per event) would never move the window.
+                    val idx = dx.toInt()
+                    val idy = dy.toInt()
+                    host.onMove(windowId, idx, idy)
+                    lastRawX += idx
+                    lastRawY += idy
                 }
                 return true
             }

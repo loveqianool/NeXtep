@@ -188,9 +188,15 @@ object WindowManager : WindowHost {
         val rec = windows[id] ?: return
         val app = appContext ?: return
         val pkg = rec.componentName.packageName
+        // AppOps mute is per-package, not per-window: sync every window of
+        // this package, or a sibling window would show 🔊 while actually
+        // muted, and closing the muted window would clear the package mute
+        // (closeWindow checks the other windows' isMuted flags).
         WindowMute.setMuted(app, pkg, muted)
-        windows[id] = rec.copy(isMuted = muted)
-        rec.view.setMuted(muted)
+        windows.values.filter { it.componentName.packageName == pkg }.forEach { w ->
+            windows[w.id] = w.copy(isMuted = muted)
+            w.view.setMuted(muted)
+        }
         Log.i(TAG, "setMuted id=$id muted=$muted")
     }
 
@@ -369,7 +375,8 @@ object WindowManager : WindowHost {
         val vd = displayEngine?.create(id, vdW, vdH, densityDpi(app), surface)
         if (vd == null) {
             Log.i(TAG, "openApp id=$id: display creation failed")
-            surfaces.remove(id)
+            // Let closeWindow release the surface; removing it here first
+            // would make closeWindow's release a no-op and leak it.
             closeWindow(id)
             return
         }
@@ -381,10 +388,11 @@ object WindowManager : WindowHost {
         // Sync mute state now that the display exists (receiver is registered
         // via the display hook). AppOps mute is persistent; clear any leftover
         // from a previous session unless another window of the same package
-        // is currently muted.
+        // is currently muted. Checking only this window is wrong: a sibling
+        // window muted after this one opened would have its mute cleared.
         val pkg = rec.componentName.packageName
-        val recNow = windows[id]
-        if (recNow != null && !recNow.isMuted) {
+        val anyMuted = windows.values.any { it.componentName.packageName == pkg && it.isMuted }
+        if (!anyMuted) {
             WindowMute.setMuted(app, pkg, false)
         }
         Log.i(TAG, "openApp id=$id launched on display=$displayId")
@@ -438,6 +446,11 @@ object WindowManager : WindowHost {
         oldVd?.let { runCatching { it.release() } }
         if (!moved) {
             Log.i(TAG, "rebuildDisplay id=$id: move failed, relaunching")
+            // Forget the old task id first: resolveTaskId() returns early
+            // while taskId >= 0, so without this it would never learn the
+            // new task and every later bring-to-front would move-then-relaunch.
+            // Only if the window still exists; do not re-add a closed window.
+            windows[id]?.let { windows[id] = it.copy(taskId = -1) }
             launchOnDisplay(app, rec.componentName, newDisplayId)
             handler.postDelayed({ resolveTaskId(id) }, 500)
         }
@@ -633,8 +646,11 @@ object WindowManager : WindowHost {
 
     private fun usableRect(app: Context): Rect {
         val wm = app.getSystemService(AndroidWindowManager::class.java) ?: return defaultRect(app)
-        val bounds = wm.currentWindowMetrics.bounds
-        val insets = wm.currentWindowMetrics.windowInsets.getInsets(
+        // One metrics snapshot: bounds and insets from two separate calls
+        // could disagree if the configuration changes between them.
+        val metrics = wm.currentWindowMetrics
+        val bounds = metrics.bounds
+        val insets = metrics.windowInsets.getInsets(
             WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout(),
         )
         return Rect(
