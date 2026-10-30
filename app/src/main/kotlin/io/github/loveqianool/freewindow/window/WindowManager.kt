@@ -19,6 +19,7 @@ import android.view.WindowInsets
 import android.view.WindowManager as AndroidWindowManager
 import android.widget.Toast
 import io.github.loveqianool.freewindow.input.ImeHelper
+import io.github.loveqianool.freewindow.notification.AppPanel
 import io.github.loveqianool.freewindow.notification.FreeWindowNotification
 import io.github.loveqianool.freewindow.server.DisplayEngine
 import java.util.concurrent.ConcurrentHashMap
@@ -114,6 +115,10 @@ object WindowManager : WindowHost {
             val pkg = intent?.data?.schemeSpecificPart ?: return
             aspectCache.keys.filter { it.packageName == pkg }.forEach { aspectCache.remove(it) }
             labelCache.keys.filter { it.packageName == pkg }.forEach { labelCache.remove(it) }
+            // Icons are the third per-app cache: unlike labels (re-queried
+            // on every panel open), icons are only decoded on a cache miss,
+            // so without this an updated app's new icon would never show.
+            AppPanel.clearIconCacheFor(pkg)
             Log.i(TAG, "package changed, cache cleared pkg=$pkg")
         }
     }

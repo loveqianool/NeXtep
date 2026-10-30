@@ -7,13 +7,13 @@ interface WindowHost {
     /** User tapped inside the window content. */
     fun onTap(id: Int)
 
-    /** Collapse button (▲, left of park): shrink the window to its icon. */
+    /** Collapse (▲ in the hamburger menu): shrink the window to its icon. */
     fun onCollapse(id: Int)
 
-    /** Fit button (▭): resize the window to the app's aspect ratio. */
+    /** Fit (▭ in the hamburger menu): resize the window to the app's aspect ratio. */
     fun onFitAspect(id: Int)
 
-    /** Crop button (✂): enter crop mode, or reset an applied crop. */
+    /** Crop (✂ in the hamburger menu): enter crop mode, or reset an applied crop. */
     fun onCrop(id: Int)
 
     /** Tap on a collapsed icon: restore the window to its saved rect. */
@@ -25,7 +25,7 @@ interface WindowHost {
     /** Maximize button (⛶): toggle between windowed and maximized. */
     fun onToggleMaximize(id: Int)
 
-    /** Mute button (🔊/🔇): toggle per-window audio mute. */
+    /** Mute (🔊/🔇 in the hamburger menu, plus the panel row): toggle per-window audio mute. */
     fun onToggleMute(id: Int)
 
     /** Close button (✕). */

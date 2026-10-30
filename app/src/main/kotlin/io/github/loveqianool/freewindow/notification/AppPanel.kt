@@ -630,23 +630,34 @@ class AppPanel(
     private fun dp(value: Int): Int =
         (value * context.resources.displayMetrics.density).toInt()
 
-    private companion object {
-        const val TAG = "FreeWindow"
-        const val WINDOW_SECTION_MAX_HEIGHT_DP = 240
+    companion object {
+        private const val TAG = "FreeWindow"
+        private const val WINDOW_SECTION_MAX_HEIGHT_DP = 240
         /**
          * Icon decoding used to be single-threaded: with ~200 apps the
          * last icons took seconds to appear. Four threads decode in
          * parallel; the per-view tag guard still prevents a stale icon
          * from landing on a rebuilt row, and LruCache is synchronized.
          */
-        val bgExecutor = Executors.newFixedThreadPool(4)
+        private val bgExecutor = Executors.newFixedThreadPool(4)
         /**
          * Shared across panel instances (it used to be per-instance, so
          * every panel open re-decoded all icons). The app list itself is
          * still queried on each open, so installs/uninstalls stay fresh.
+         * The icon itself is NOT re-queried on open, so an app update
+         * that changes its icon would keep showing the old one until
+         * SystemUI restarts — unless [clearIconCacheFor] is called on
+         * package change (see WindowManager's package receiver).
          */
-        val iconCache = object : android.util.LruCache<ComponentName, Drawable>(64) {
+        private val iconCache = object : android.util.LruCache<ComponentName, Drawable>(64) {
             override fun sizeOf(key: ComponentName, value: Drawable): Int = 1
+        }
+
+        /** Drop cached icons for one package (install/update/remove). */
+        fun clearIconCacheFor(packageName: String) {
+            iconCache.snapshot().keys
+                .filter { it.packageName == packageName }
+                .forEach { iconCache.remove(it) }
         }
     }
 }
