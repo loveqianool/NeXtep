@@ -466,6 +466,11 @@ class FreeWindowView @JvmOverloads constructor(
 
     private fun ensureCollapseIcon() {
         if (collapseIconView != null) return
+        // Capture first: inside TextView.apply, unqualified `windowId`
+        // resolves to View.getWindowId() (android.view.WindowId), not this
+        // class's Int property — that shadowing was the CI error at the
+        // host.onMove / host.onExpand calls below (WindowId! vs Int).
+        val id = windowId
         val icon = TextView(context).apply {
             text = "▲"
             contentDescription = "点击还原窗口"
@@ -492,7 +497,7 @@ class FreeWindowView @JvmOverloads constructor(
                             // discard the sub-pixel remainder on slow drags.
                             val idx = dx.toInt()
                             val idy = dy.toInt()
-                            host.onMove(windowId, idx, idy)
+                            host.onMove(id, idx, idy)
                             iconLastRawX += idx
                             iconLastRawY += idy
                         }
@@ -500,7 +505,7 @@ class FreeWindowView @JvmOverloads constructor(
                     }
                     MotionEvent.ACTION_UP -> {
                         // Tap (no drag) restores; a drag just ends here.
-                        if (!iconDragging) host.onExpand(windowId)
+                        if (!iconDragging) host.onExpand(id)
                         iconDragging = false
                         true
                     }

@@ -916,6 +916,10 @@ object WindowManager : WindowHost {
      * from maxAspectRatio when declared, else the device screen aspect.
      * maxAspectRatio is long / short; a letterboxed app is boxed to
      * exactly that ratio, so it is the fit target when present.
+     * Note: maxAspectRatio is NOT in the compileSdk 36.1 stub (CI:
+     * "Unresolved reference"), so it is read via reflection like the
+     * other hidden framework fields in this codebase; absent at runtime
+     * it simply falls back to the screen aspect.
      */
     private data class AspectInfo(val landscape: Boolean?, val ratio: Float)
 
@@ -938,7 +942,12 @@ object WindowManager : WindowHost {
             -> false
             else -> null
         }
-        val ratio = if (info.maxAspectRatio > 0f) info.maxAspectRatio else screenAspect(app)
+        val maxRatio = runCatching {
+            ActivityInfo::class.java.getDeclaredField("maxAspectRatio")
+                .apply { isAccessible = true }
+                .getFloat(info)
+        }.getOrElse { 0f }
+        val ratio = if (maxRatio > 0f) maxRatio else screenAspect(app)
         val aspect = AspectInfo(landscape, ratio)
         aspectCache[component] = aspect
         return aspect
