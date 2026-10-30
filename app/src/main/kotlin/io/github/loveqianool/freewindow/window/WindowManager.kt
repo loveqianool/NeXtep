@@ -46,10 +46,10 @@ object WindowManager : WindowHost {
     private const val TAG = "FreeWindow"
     /** At least this much of a window stays visible, so it can be dragged back. */
     private const val MIN_VISIBLE_DP = 80
-    // Title-bar buttons total 7 x 38dp = 266dp (the 48dp top-left toggle
+    // Title-bar buttons total 4 x 38dp = 152dp (the 48dp top-left toggle
     // overlays the bar, it does not add width), so the minimum must
     // exceed the button total or buttons would overflow a smallest window.
-    private const val MIN_SIZE_DP = 280
+    private const val MIN_SIZE_DP = 200
     /** Each window is a VirtualDisplay + Surface + task; cap the count. */
     const val MAX_WINDOWS = 8
 

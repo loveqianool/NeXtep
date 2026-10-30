@@ -47,8 +47,8 @@ class ResizeHandler(
 
     companion object {
         const val HANDLE_DP = 36
-        // Keep in sync with WindowManager: title-bar buttons total 266dp.
-        const val MIN_SIZE_DP = 280
+        // Keep in sync with WindowManager: title-bar buttons total 152dp.
+        const val MIN_SIZE_DP = 200
         const val TAP_SLOP_DP = 8
         private const val TAG = "FreeWindow"
         private const val PREVIEW_COLOR = 0xFF00E5FF.toInt()
