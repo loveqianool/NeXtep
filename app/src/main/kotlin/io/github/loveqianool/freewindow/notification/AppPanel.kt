@@ -108,6 +108,17 @@ class AppPanel(
         val search = EditText(context).apply {
             hint = "搜索应用"
             isSingleLine = true
+            // Search is live-filtered, so Enter has no submit action;
+            // make it dismiss the keyboard instead of doing nothing.
+            imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH
+            setOnEditorActionListener { v, actionId, _ ->
+                if (actionId == android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH) {
+                    context.getSystemService(android.view.inputmethod.InputMethodManager::class.java)
+                        ?.hideSoftInputFromWindow(v.windowToken, 0)
+                    v.clearFocus()
+                    true
+                } else false
+            }
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT,

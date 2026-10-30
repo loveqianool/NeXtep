@@ -40,6 +40,7 @@ object FreeWindowNotification {
     private const val TAG = "FreeWindow"
     private const val CHANNEL_ID = "freewindow"
     private const val NOTIFICATION_ID = 41
+    private const val MAX_NOTIFICATION_ACTIONS = 3
 
     /** A free window shown in the notification / panel. */
     data class ParkedApp(
@@ -159,7 +160,12 @@ object FreeWindowNotification {
             .setShowWhen(false)
             .setOnlyAlertOnce(true)
 
-        parkedApps.forEach { app ->
+        // SystemUI shows only a few actions in the collapsed view; with up
+        // to 8 windows, listing every parked app as an action would silently
+        // hide the later ones. Cap the actions and let the panel (reached
+        // by tapping the notification body) handle the rest. All labels
+        // still appear in the InboxStyle lines above.
+        parkedApps.take(MAX_NOTIFICATION_ACTIONS).forEach { app ->
             // Parked: "切换" unparks. Maximized: "恢复窗口" unparks and
             // restores the windowed size (same as the panel's restore button).
             val isMaximized = app.isMaximized

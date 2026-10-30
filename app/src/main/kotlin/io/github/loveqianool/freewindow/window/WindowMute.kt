@@ -28,6 +28,10 @@ object WindowMute {
     fun setMuted(context: android.content.Context, packageName: String, muted: Boolean) {
         try {
             val intent = android.content.Intent(ACTION_MUTE).apply {
+                // Explicit target: the receiver lives in system_server
+                // (package "android"), on top of the STATUS_BAR_SERVICE
+                // permission gate on the receiver side.
+                setPackage("android")
                 putExtra(EXTRA_PACKAGE, packageName)
                 putExtra(EXTRA_MUTED, muted)
             }

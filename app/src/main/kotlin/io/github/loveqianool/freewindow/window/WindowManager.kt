@@ -423,18 +423,25 @@ object WindowManager : WindowHost {
         val oldTaskId = rec.taskId
         // If the size changed (resize/maximize), the moved task won't re-layout;
         // relaunch instead. Only move when the size is the same (surface recreate).
-        val oldW = oldVd?.display?.let { d ->
+        // Check both dimensions: a height-only change (vertical resize with
+        // unchanged width) must also relaunch, or the task keeps the old layout.
+        val oldSize = oldVd?.display?.let { d ->
             runCatching {
                 val metrics = android.util.DisplayMetrics()
                 d.getRealMetrics(metrics)
-                metrics.widthPixels
+                metrics.widthPixels to metrics.heightPixels
             }.getOrNull()
-        } ?: -1
+        } ?: (-1 to -1)
+        val oldW = oldSize.first
+        val oldH = oldSize.second
         surfaces[id]?.let { runCatching { it.release() } }
         surfaces[id] = surface
         val rect = currentRect(rec.view)
         val (vdW, vdH) = vdSizeForWindow(rect, rec.view)
-        val sizeChanged = oldW > 0 && oldW != vdW
+        // oldH is the old VD's own height (already content-only, like vdH:
+        // title-bar toggles resize the VD in place, so it already reflects
+        // the current bar visibility). Compare VD sizes directly.
+        val sizeChanged = (oldW > 0 && oldW != vdW) || (oldH > 0 && oldH != vdH)
         val vd = displayEngine?.create(
             id, vdW, vdH, densityDpi(app), surface,
             releaseFirst = false,
@@ -489,12 +496,21 @@ object WindowManager : WindowHost {
         val params = rec.view.layoutParams as? AndroidWindowManager.LayoutParams ?: return
         // Re-adding changes z-order. The TextureView surface is recreated and
         // onSurfaceAvailable() rebuilds the VirtualDisplay (task is moved back).
-        runCatching {
+        val bringOk = runCatching {
             wm.removeView(rec.view)
             wm.addView(rec.view, params)
-        }.onFailure {
-            Log.i(TAG, "bringToFront failed id=$id: ${it.message}")
-            return
+        }.isSuccess
+        if (!bringOk) {
+            // Do not leave a detached orphan (record exists, view gone):
+            // try to put the view back once; if that also fails, close
+            // the window cleanly instead of leaving an unopenable entry.
+            val recovered = runCatching { wm.addView(rec.view, params) }.isSuccess
+            if (!recovered) {
+                Log.i(TAG, "bringToFront failed id=$id, closing window")
+                closeWindow(id)
+                return
+            }
+            Log.i(TAG, "bringToFront recovered id=$id")
         }
         synchronized(zOrder) {
             zOrder.remove(id)
@@ -506,14 +522,18 @@ object WindowManager : WindowHost {
     private fun applyRect(id: Int, rect: Rect) {
         val rec = windows[id] ?: return
         val app = appContext ?: return
+        // Clamp here, not only in callers: the restore fallback (defaultRect
+        // when no saved rect exists) used to bypass the clamp and could sit
+        // under a system bar. Clamping an already-clamped rect is a no-op.
+        val clamped = clampRect(rect, usableRect(app), app.resources.displayMetrics.density)
         val params = rec.view.layoutParams as? AndroidWindowManager.LayoutParams ?: return
-        params.x = rect.left
-        params.y = rect.top
-        params.width = rect.width()
-        params.height = rect.height()
+        params.x = clamped.left
+        params.y = clamped.top
+        params.width = clamped.width()
+        params.height = clamped.height()
         wm?.updateViewLayout(rec.view, params)
         displays[id]?.let { vd ->
-            val (vdW, vdH) = vdSizeForWindow(rect, rec.view)
+            val (vdW, vdH) = vdSizeForWindow(clamped, rec.view)
             runCatching { vd.resize(vdW, vdH, densityDpi(app)) }
                 .onFailure { Log.i(TAG, "resize failed id=$id: ${it.message}") }
         }
@@ -521,7 +541,10 @@ object WindowManager : WindowHost {
 
     // ------------------------------------------------------------ tasks
 
-    private fun resolveTaskId(id: Int, attempts: Int = 8) {
+    // Cold starts can take longer than the old 8 x 400ms (~3.7s with the
+    // initial 500ms delay); 30 attempts covers ~12s. Still bounded, so a
+    // permanently failed launch does not poll getRunningTasks forever.
+    private fun resolveTaskId(id: Int, attempts: Int = 30) {
         val rec = windows[id] ?: return
         if (rec.taskId >= 0 || rec.displayId < 0) return
         val taskId = findTaskOnDisplay(rec.displayId)

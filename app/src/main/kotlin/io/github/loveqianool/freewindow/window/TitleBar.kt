@@ -129,6 +129,12 @@ class TitleBar @JvmOverloads constructor(
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
             layoutParams = LayoutParams(size, size)
+            // Tap feedback: plain text buttons gave none; the ripple
+            // background is transparent, so the bar stays semi-transparent.
+            val out = android.util.TypedValue()
+            if (context.theme.resolveAttribute(android.R.attr.selectableItemBackground, out, true)) {
+                setBackgroundResource(out.resourceId)
+            }
         }
     }
 
