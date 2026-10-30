@@ -50,6 +50,8 @@ class AppPanel(
     private val onWindowMaximized: (windowId: Int) -> Unit,
     private val onWindowClosed: (windowId: Int) -> Unit,
     private val onWindowParked: (windowId: Int) -> Unit,
+    private val onWindowMuted: (windowId: Int) -> Unit,
+    private val onWindowCropReset: (windowId: Int) -> Unit,
 ) {
 
     private data class AppEntry(
@@ -519,8 +521,9 @@ class AppPanel(
         layout.addView(TextView(context).apply {
             text = app.label
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-            // Single line + ellipsis: with 3 x 48dp buttons, a long label
-            // on a narrow panel would otherwise wrap and inflate the row.
+            // Single line + ellipsis: with up to 5 x 48dp buttons
+            // (park/max/close + mute + crop-reset), a long label on a
+            // narrow panel would otherwise wrap and inflate the row.
             maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
@@ -561,6 +564,23 @@ class AppPanel(
             onWindowMaximized(app.windowId)
             refreshWindowSections()
         })
+        // Mute toggle: a collapsed or parked window has no reachable
+        // title-bar menu, so without this its mute could not be changed.
+        layout.addView(actionButton(if (app.isMuted) "🔇" else "🔊", if (app.isMuted) "取消静音" else "静音") {
+            Log.i(TAG, "panel: window mute toggled window=${app.windowId}")
+            onWindowMuted(app.windowId)
+            refreshWindowSections()
+        })
+        // Crop reset, only when cropped: same reason as mute — a parked
+        // or collapsed cropped window otherwise has no way back to the
+        // full picture without expanding it first.
+        if (app.isCropped) {
+            layout.addView(actionButton("✂", "恢复完整画面") {
+                Log.i(TAG, "panel: window crop reset window=${app.windowId}")
+                onWindowCropReset(app.windowId)
+                refreshWindowSections()
+            })
+        }
         // ✕ button for close.
         layout.addView(actionButton("✕", "关闭窗口") {
             Log.i(TAG, "panel: window closed window=${app.windowId}")

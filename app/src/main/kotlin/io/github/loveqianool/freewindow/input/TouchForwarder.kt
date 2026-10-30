@@ -9,9 +9,12 @@ import android.view.MotionEvent
  * Forwards touch events received on a free window's TextureView into the
  * VirtualDisplay backing that window.
  *
- * The TextureView is laid out at exactly the VirtualDisplay's size, so
- * coordinates map 1:1 and need no translation — only the target display id
- * has to be stamped on the event before injection.
+ * Without a crop, the TextureView is laid out at exactly the
+ * VirtualDisplay's size, so coordinates map 1:1 and need no translation —
+ * only the target display id has to be stamped on the event before
+ * injection. With a crop applied, [FreeWindowView.forwardOrdered] first
+ * maps the event through the inverse crop matrix (see that file), so by
+ * the time it reaches here the coordinates are already in VD space.
  */
 object TouchForwarder {
     private const val TAG = "FreeWindow"

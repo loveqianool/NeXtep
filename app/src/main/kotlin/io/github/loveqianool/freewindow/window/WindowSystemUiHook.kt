@@ -86,6 +86,12 @@ object WindowSystemUiHook {
                             onWindowParked = { windowId ->
                                 WindowManager.parkWindow(windowId)
                             },
+                            onWindowMuted = { windowId ->
+                                WindowManager.onToggleMute(windowId)
+                            },
+                            onWindowCropReset = { windowId ->
+                                WindowManager.resetCrop(windowId)
+                            },
                         )
                         currentPanel = panel
                         panel.show()

@@ -52,6 +52,7 @@ Android 自由窗口模块（Xposed/LSPosed），基于 [NeXtep](https://github.
 
 - Vector（JingMatrix）的 `VectorConfigCache` 在部分版本上解析 APK 失败（`PackageParser failed ... using fallback ApplicationInfo`），导致 system_server 加载旧版模块代码。如遇此问题，请向 Vector 反馈
 - 输入法在部分应用上可能需要点两次输入框
+- 裁剪后的窗口里输文字：键盘画在虚拟屏里，如果键盘区域不在框选保留区内，键盘会看不到。此时先从面板或菜单恢复完整画面再输入，输完可重新裁剪
 
 ## License
 

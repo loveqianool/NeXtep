@@ -346,6 +346,7 @@ class FreeWindowView @JvmOverloads constructor(
     /** Enter selection mode: drag on the content to draw the crop rect. */
     fun enterCropMode() {
         cropMode = true
+        titleBar.setCropMode(true)
         cropSelecting = false
         cropOverlayView?.selection = null
         cropOverlayView?.visibility = View.VISIBLE
@@ -355,6 +356,7 @@ class FreeWindowView @JvmOverloads constructor(
     /** Leave selection mode without applying or clearing a crop. */
     fun cancelCropMode() {
         cropMode = false
+        titleBar.setCropMode(false)
         cropSelecting = false
         cropOverlayView?.selection = null
         cropOverlayView?.visibility = View.GONE

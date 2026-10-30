@@ -28,9 +28,27 @@ class TitleBar @JvmOverloads constructor(
     private val maxBtn = makeButton("⛶", "最大化")
     private val closeBtn = makeButton("✕", "关闭窗口")
 
+    // State badge: mute/crop used to be title-bar buttons, so their state
+    // was visible at a glance; after the hamburger move they would only
+    // show inside the menu, so a small glyph sits left of the menu button
+    // (between the flexible spacer and the buttons, so it never shifts
+    // the buttons: the spacer absorbs its width).
+    private val statusView = TextView(context).apply {
+        textSize = 16f
+        setTextColor(Color.WHITE)
+        gravity = Gravity.CENTER
+        layoutParams = LayoutParams(
+            LayoutParams.WRAP_CONTENT,
+            LayoutParams.MATCH_PARENT,
+        )
+        setPadding(dp(4), 0, dp(4), 0)
+        visibility = View.GONE
+    }
+
     // Menu item text follows current state; refreshed each time the menu opens.
     private var muted = false
     private var cropped = false
+    private var cropMode = false
 
     private var lastRawX = 0f
     private var lastRawY = 0f
@@ -47,6 +65,7 @@ class TitleBar @JvmOverloads constructor(
             layoutParams = LayoutParams(0, LayoutParams.MATCH_PARENT, 1f)
         }
         addView(spacer)
+        addView(statusView)
         addView(menuBtn)
         addView(parkBtn)
         addView(maxBtn)
@@ -120,6 +139,7 @@ class TitleBar @JvmOverloads constructor(
 
     fun setMuted(muted: Boolean) {
         this.muted = muted
+        refreshStatus()
     }
 
     fun setMaximized(maximized: Boolean) {
@@ -129,6 +149,26 @@ class TitleBar @JvmOverloads constructor(
 
     fun setCropped(cropped: Boolean) {
         this.cropped = cropped
+        refreshStatus()
+    }
+
+    fun setCropMode(mode: Boolean) {
+        cropMode = mode
+    }
+
+    private fun refreshStatus() {
+        val text = buildString {
+            if (muted) append("🔇")
+            if (cropped) append("✂")
+        }
+        statusView.text = text
+        statusView.visibility = if (text.isEmpty()) View.GONE else View.VISIBLE
+        statusView.contentDescription = when {
+            muted && cropped -> "已静音，已裁剪"
+            muted -> "已静音"
+            cropped -> "已裁剪"
+            else -> ""
+        }
     }
 
     // Built fresh on every open so mute/crop labels track current state.
@@ -137,7 +177,14 @@ class TitleBar @JvmOverloads constructor(
         val menu = popup.menu
         menu.add(0, MENU_COLLAPSE, 0, "缩成图标")
         menu.add(0, MENU_FIT, 1, "按应用宽高比适配")
-        menu.add(0, MENU_CROP, 2, if (cropped) "恢复完整画面" else "裁剪画面")
+        menu.add(
+            0, MENU_CROP, 2,
+            when {
+                cropMode -> "取消框选"
+                cropped -> "恢复完整画面"
+                else -> "裁剪画面"
+            },
+        )
         menu.add(0, MENU_MUTE, 3, if (muted) "取消静音" else "静音")
         popup.setOnMenuItemClickListener { item ->
             when (item.itemId) {
@@ -150,6 +197,9 @@ class TitleBar @JvmOverloads constructor(
         }
         popup.show()
     }
+
+    private fun dp(value: Int): Int =
+        (value * resources.displayMetrics.density).toInt()
 
     private fun makeButton(text: String, description: String): TextView {
         val size = (FreeWindowView.TITLE_BAR_DP * resources.displayMetrics.density).toInt()

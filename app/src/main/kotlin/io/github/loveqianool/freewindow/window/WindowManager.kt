@@ -85,7 +85,37 @@ object WindowManager : WindowHost {
         appContext = app
         wm = app.getSystemService(AndroidWindowManager::class.java)
         displayEngine = DisplayEngine(app)
+        // Aspect/label caches are per-app and never expire on their own:
+        // an app update that changes its orientation or maxAspectRatio
+        // would otherwise keep the old fit until SystemUI restarts.
+        // Best-effort: if registration is refused in this process, the
+        // caches simply stay stale until the next restart.
+        runCatching {
+            val filter = android.content.IntentFilter().apply {
+                addAction(android.content.Intent.ACTION_PACKAGE_ADDED)
+                addAction(android.content.Intent.ACTION_PACKAGE_REPLACED)
+                addAction(android.content.Intent.ACTION_PACKAGE_REMOVED)
+                addDataScheme("package")
+            }
+            // Exported is required for system package broadcasts on
+            // API 33+; a spoofed intent could only clear a cache entry,
+            // which is re-read on next use, so that is harmless here.
+            app.registerReceiver(
+                packageChangeReceiver, filter,
+                android.content.Context.RECEIVER_EXPORTED,
+            )
+        }.onFailure { Log.i(TAG, "package change receiver refused: ${it.message}") }
         Log.i(TAG, "WindowManager initialized")
+    }
+
+    /** Drops cached per-app info for one package on install/update/remove. */
+    private val packageChangeReceiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: android.content.Intent?) {
+            val pkg = intent?.data?.schemeSpecificPart ?: return
+            aspectCache.keys.filter { it.packageName == pkg }.forEach { aspectCache.remove(it) }
+            labelCache.keys.filter { it.packageName == pkg }.forEach { labelCache.remove(it) }
+            Log.i(TAG, "package changed, cache cleared pkg=$pkg")
+        }
     }
 
     // ------------------------------------------------------------ lifecycle
@@ -251,7 +281,7 @@ object WindowManager : WindowHost {
             Rect(rect.left, rect.top, rect.left + shortPx, rect.top + longPx)
         }
         applyRect(id, fitted)
-        Log.i(TAG, "fitAspect id=$id rect=$rect fitted=$fitted ratio=$ratio landscape=$landscape")
+        Log.i(TAG, "fitAspect id=$id rect=$rect fitted=$fitted ratio=$ratio source=${aspect?.ratioSource ?: "screenAspect"} landscape=$landscape")
     }
 
     /** Hide the window; the app keeps running on its VirtualDisplay. */
@@ -310,6 +340,11 @@ object WindowManager : WindowHost {
         rec.view.setMaximized(true)
         windows[id] = rec.copy(isMaximized = true)
         Log.i(TAG, "maximized id=$id rect=$rect")
+    }
+
+    /** Clear a window's crop without expanding or unparking it. */
+    fun resetCrop(id: Int) {
+        windows[id]?.view?.resetCrop()
     }
 
     fun setMuted(id: Int, muted: Boolean) {
@@ -448,7 +483,7 @@ object WindowManager : WindowHost {
             else -> {
                 view.enterCropMode()
                 appContext?.let {
-                    Toast.makeText(it, "拖动框选要保留的画面，松手即裁剪；再点 ✂ 恢复", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(it, "拖动框选要保留的画面，松手即裁剪；菜单里可恢复", Toast.LENGTH_SHORT).show()
                 }
             }
         }
@@ -921,7 +956,12 @@ object WindowManager : WindowHost {
      * other hidden framework fields in this codebase; absent at runtime
      * it simply falls back to the screen aspect.
      */
-    private data class AspectInfo(val landscape: Boolean?, val ratio: Float)
+    private data class AspectInfo(
+        val landscape: Boolean?,
+        val ratio: Float,
+        /** "maxAspectRatio" when the app declares one, else "screenAspect". */
+        val ratioSource: String,
+    )
 
     private fun aspectFor(component: ComponentName): AspectInfo? {
         aspectCache[component]?.let { return it }
@@ -948,7 +988,8 @@ object WindowManager : WindowHost {
                 .getFloat(info)
         }.getOrElse { 0f }
         val ratio = if (maxRatio > 0f) maxRatio else screenAspect(app)
-        val aspect = AspectInfo(landscape, ratio)
+        val source = if (maxRatio > 0f) "maxAspectRatio" else "screenAspect"
+        val aspect = AspectInfo(landscape, ratio, source)
         aspectCache[component] = aspect
         return aspect
     }
