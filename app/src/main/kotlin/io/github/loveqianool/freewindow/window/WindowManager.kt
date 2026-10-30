@@ -17,6 +17,7 @@ import android.view.Surface
 import android.view.View
 import android.view.WindowInsets
 import android.view.WindowManager as AndroidWindowManager
+import android.widget.Toast
 import io.github.loveqianool.freewindow.input.ImeHelper
 import io.github.loveqianool.freewindow.notification.FreeWindowNotification
 import io.github.loveqianool.freewindow.server.DisplayEngine
@@ -45,10 +46,10 @@ object WindowManager : WindowHost {
     private const val TAG = "FreeWindow"
     /** At least this much of a window stays visible, so it can be dragged back. */
     private const val MIN_VISIBLE_DP = 80
-    // Title-bar buttons total 6 x 38dp = 228dp (the 48dp top-left toggle
+    // Title-bar buttons total 7 x 38dp = 266dp (the 48dp top-left toggle
     // overlays the bar, it does not add width), so the minimum must
     // exceed the button total or buttons would overflow a smallest window.
-    private const val MIN_SIZE_DP = 240
+    private const val MIN_SIZE_DP = 280
     /** Each window is a VirtualDisplay + Surface + task; cap the count. */
     const val MAX_WINDOWS = 8
 
@@ -178,7 +179,7 @@ object WindowManager : WindowHost {
         val size = (FreeWindowView.COLLAPSED_DP * density).toInt()
         synchronized(savedRects) { savedRects[id] = currentRect(rec.view) }
         rec.view.setCollapsed(true)
-        // Position-only clamp: clampRect() would force the 240dp minimum
+        // Position-only clamp: clampRect() would force the minimum size
         // size and blow the icon back up to a window.
         params.width = size
         params.height = size
@@ -216,7 +217,7 @@ object WindowManager : WindowHost {
      * Resize the window to the app's aspect ratio, keeping the top-left
      * corner and the window's long side, shrinking only the short side.
      * Shrinking (not growing) keeps the window inside the usable area;
-     * applyRect() still clamps it (240dp minimum may soften the ratio on
+     * applyRect() still clamps it (the minimum size may soften the ratio on
      * very small windows, which is better than overflowing the screen).
      *
      * Target ratio (long / short): the app's declared maxAspectRatio when
@@ -233,6 +234,10 @@ object WindowManager : WindowHost {
         if (windows[id]?.isMaximized == true) toggleMaximize(id)
         val rec = windows[id] ?: return
         if (rec.isCollapsed || rec.isMaximized) return
+        // Resizing under a selection would leave the overlay in old
+        // coordinates; cancel the mode (the applied crop, if any, stays
+        // and is re-derived from fractions on the new size).
+        rec.view.cancelCropMode()
         val app = appContext ?: return
         val aspect = aspectFor(rec.componentName)
         val rect = currentRect(rec.view)
@@ -253,6 +258,9 @@ object WindowManager : WindowHost {
     fun parkWindow(id: Int) {
         val rec = windows[id] ?: return
         if (rec.isParked) return
+        // A selection in progress would otherwise survive hidden and
+        // intercept content touches on unpark; the applied crop stays.
+        rec.view.cancelCropMode()
         rec.view.visibility = View.INVISIBLE
         windows[id] = rec.copy(isParked = true)
         updateNotification()
@@ -427,6 +435,26 @@ object WindowManager : WindowHost {
 
     override fun onFitAspect(id: Int) = fitAspect(id)
 
+    override fun onCrop(id: Int) {
+        val rec = windows[id] ?: return
+        val view = rec.view
+        when {
+            // Cropped: one tap restores the full picture.
+            view.isCropped() -> view.resetCrop()
+            // Selecting: one tap cancels the mode without cropping.
+            view.isCropMode() -> view.cancelCropMode()
+            // Normal: enter selection mode; the hint explains the gesture,
+            // since a crop mode with no visible affordance is undiscoverable.
+            else -> {
+                view.enterCropMode()
+                appContext?.let {
+                    Toast.makeText(it, "拖动框选要保留的画面，松手即裁剪；再点 ✂ 恢复", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+        Log.i(TAG, "onCrop id=$id cropped=${view.isCropped()} mode=${view.isCropMode()}")
+    }
+
     override fun onExpand(id: Int) = expandCollapsed(id)
 
     override fun onPark(id: Int) = parkWindow(id)
@@ -450,7 +478,7 @@ object WindowManager : WindowHost {
         val usable = usableRect(app)
         if (rec.isCollapsed) {
             // Icon drag: position only, keep the 48dp size. The normal
-            // clamp below would force the 240dp minimum and re-inflate it.
+            // clamp below would force the minimum size and re-inflate it.
             params.x = (params.x + dx).coerceIn(
                 usable.left, (usable.right - params.width).coerceAtLeast(usable.left),
             )
@@ -1025,6 +1053,7 @@ object WindowManager : WindowHost {
                     isParked = rec.isParked,
                     isMuted = rec.isMuted,
                     isCollapsed = rec.isCollapsed,
+                    isCropped = rec.view.isCropped(),
                 )
             }
         }

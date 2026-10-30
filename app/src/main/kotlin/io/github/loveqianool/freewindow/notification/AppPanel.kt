@@ -539,6 +539,13 @@ class AppPanel(
                 setPadding(dp(8), dp(4), dp(4), dp(4))
             })
         }
+        if (app.isCropped) {
+            layout.addView(TextView(context).apply {
+                text = "已裁剪"
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+                setPadding(dp(8), dp(4), dp(4), dp(4))
+            })
+        }
         // Park button: only for visible windows (background ones are parked already).
         if (isCurrent) {
             layout.addView(actionButton("▽", "最小化到后台") {

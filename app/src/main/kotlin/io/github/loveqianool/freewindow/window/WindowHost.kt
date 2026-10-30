@@ -13,6 +13,9 @@ interface WindowHost {
     /** Fit button (▭): resize the window to the app's aspect ratio. */
     fun onFitAspect(id: Int)
 
+    /** Crop button (✂): enter crop mode, or reset an applied crop. */
+    fun onCrop(id: Int)
+
     /** Tap on a collapsed icon: restore the window to its saved rect. */
     fun onExpand(id: Int)
 

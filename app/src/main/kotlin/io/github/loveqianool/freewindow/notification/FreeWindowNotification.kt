@@ -56,6 +56,7 @@ object FreeWindowNotification {
         val isParked: Boolean = false,
         val isMuted: Boolean = false,
         val isCollapsed: Boolean = false,
+        val isCropped: Boolean = false,
     )
 
     interface Listener {

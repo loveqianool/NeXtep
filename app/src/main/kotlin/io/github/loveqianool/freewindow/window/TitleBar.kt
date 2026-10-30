@@ -13,7 +13,7 @@ import kotlin.math.hypot
 
 /**
  * Title bar for a free window: drag to move, plus collapse / park / fit /
- * maximize / mute / close buttons. 38dp tall, semi-transparent black.
+ * crop / maximize / mute / close buttons. 38dp tall, semi-transparent black.
  */
 class TitleBar @JvmOverloads constructor(
     context: Context,
@@ -25,6 +25,7 @@ class TitleBar @JvmOverloads constructor(
     private val collapseBtn = makeButton("▲", "缩成图标")
     private val parkBtn = makeButton("▽", "最小化到后台")
     private val fitBtn = makeButton("▭", "按应用宽高比适配")
+    private val cropBtn = makeButton("✂", "裁剪画面")
     private val maxBtn = makeButton("⛶", "最大化")
     private val muteBtn = makeButton("🔊", "静音")
     private val closeBtn = makeButton("✕", "关闭窗口")
@@ -47,6 +48,7 @@ class TitleBar @JvmOverloads constructor(
         addView(collapseBtn)
         addView(parkBtn)
         addView(fitBtn)
+        addView(cropBtn)
         addView(maxBtn)
         addView(muteBtn)
         addView(closeBtn)
@@ -54,6 +56,7 @@ class TitleBar @JvmOverloads constructor(
         collapseBtn.setOnClickListener { host.onCollapse(windowId) }
         parkBtn.setOnClickListener { host.onPark(windowId) }
         fitBtn.setOnClickListener { host.onFitAspect(windowId) }
+        cropBtn.setOnClickListener { host.onCrop(windowId) }
         maxBtn.setOnClickListener { host.onToggleMaximize(windowId) }
         muteBtn.setOnClickListener { host.onToggleMute(windowId) }
         closeBtn.setOnClickListener { host.onClose(windowId) }
@@ -127,6 +130,10 @@ class TitleBar @JvmOverloads constructor(
     fun setMaximized(maximized: Boolean) {
         maxBtn.text = if (maximized) "🗗" else "⛶"
         maxBtn.contentDescription = if (maximized) "恢复窗口大小" else "最大化"
+    }
+
+    fun setCropped(cropped: Boolean) {
+        cropBtn.contentDescription = if (cropped) "恢复完整画面" else "裁剪画面"
     }
 
     private fun makeButton(text: String, description: String): TextView {
