@@ -161,7 +161,10 @@ object WindowManager : WindowHost {
         val rec = windows[id] ?: return
         rec.view.visibility = View.VISIBLE
         bringToFront(id)
-        windows[id] = windows[id]?.copy(isParked = false) ?: rec.copy(isParked = false)
+        // bringToFront may have closed the window (re-add failure): do not
+        // resurrect the removed record via the rec fallback below.
+        val current = windows[id] ?: return
+        windows[id] = current.copy(isParked = false)
         updateNotification()
         Log.i(TAG, "unparkWindow id=$id")
     }
@@ -619,11 +622,16 @@ object WindowManager : WindowHost {
             val service = atm.getDeclaredMethod("getService")
                 .apply { isAccessible = true }
                 .invoke(null) ?: return@lazy null
-            val method = service.javaClass.declaredMethods.firstOrNull {
-                (it.name == "moveRootTaskToDisplay" || it.name == "moveTaskToDisplay") &&
-                    it.parameterTypes.size == 2 &&
+            // Prefer moveTaskToDisplay; falling back to moveRootTaskToDisplay
+            // only if it is absent. The old firstOrNull with an OR picked
+            // whichever the JVM happened to declare first on a given ROM.
+            val methods = service.javaClass.declaredMethods.filter {
+                it.parameterTypes.size == 2 &&
                     it.parameterTypes[0] == Int::class.javaPrimitiveType
-            }?.apply { isAccessible = true } ?: return@lazy null
+            }
+            val method = (methods.firstOrNull { it.name == "moveTaskToDisplay" }
+                ?: methods.firstOrNull { it.name == "moveRootTaskToDisplay" })
+                ?.apply { isAccessible = true } ?: return@lazy null
             service to method
         } catch (e: Throwable) {
             Log.i(TAG, "ATM move method lookup failed: ${e.message}")

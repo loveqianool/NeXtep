@@ -57,7 +57,8 @@ class AppPanel(
         val label: String,
         val resolveInfo: android.content.pm.ResolveInfo,
         /** Lowercased once at query time; search/sort must not redo it per app. */
-        val lowerLabel: String = label.lowercase(),
+        /** Pinned locale: default-locale lowercase breaks for some locales (e.g. Turkish I). */
+        val lowerLabel: String = label.lowercase(java.util.Locale.ROOT),
     )
 
     /** One app row: the entry plus its "已打开" state at render time. */
@@ -368,7 +369,7 @@ class AppPanel(
     private fun renderAppRows(query: String) {
         val recyclerView = appRecyclerView ?: return
         val emptyView = appEmptyView ?: return
-        val q = query.trim().lowercase()
+        val q = query.trim().lowercase(java.util.Locale.ROOT)
         val filtered =
             if (q.isEmpty()) allApps
             else allApps.filter { it.lowerLabel.contains(q) }

@@ -39,7 +39,11 @@ object FreeWindowNotification {
 
     private const val TAG = "FreeWindow"
     private const val CHANNEL_ID = "freewindow"
-    private const val NOTIFICATION_ID = 41
+    // Distinctive id: 41 is a common low id and notify() is per-package,
+    // so it could collide with a SystemUI-internal notification.
+    private const val NOTIFICATION_ID = 41041
+    /** Id used by builds before the 41041 change; cancelled once on show(). */
+    private const val LEGACY_NOTIFICATION_ID = 41
     private const val MAX_NOTIFICATION_ACTIONS = 3
 
     /** A free window shown in the notification / panel. */
@@ -108,6 +112,10 @@ object FreeWindowNotification {
     fun show(context: Context) {
         ensureChannel(context)
         registerReceiver(context)
+        // Clean up a stale ongoing notification from the pre-41041 build:
+        // ongoing notifications cannot be swiped away, so without this the
+        // user would see two FreeWindow notifications after updating.
+        context.getSystemService(NotificationManager::class.java).cancel(LEGACY_NOTIFICATION_ID)
         update(context, emptyList())
         Log.i(TAG, "notification shown")
     }

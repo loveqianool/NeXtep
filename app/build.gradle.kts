@@ -17,7 +17,7 @@ if (!debugKeystoreFile.exists()) {
 }
 
 android {
-    namespace = "io.github.lujinxin.nextep"
+    namespace = "io.github.loveqianool.freewindow"
     compileSdk {
         version = release(36) {
             minorApiLevel = 1
@@ -64,10 +64,8 @@ dependencies {
     // The framework provides this API at runtime; it must never be packaged in the APK.
     compileOnly("io.github.libxposed:api:102.0.0")
 
-    implementation(libs.androidx.appcompat)
-    implementation(libs.androidx.core.ktx)
+    // Only recyclerview is actually used (app panel list); the UI is
+    // hand-built Views, no AppCompat/Material/ViewPager, no res dir.
     implementation(libs.androidx.recyclerview)
-    implementation(libs.material)
-    implementation("androidx.viewpager:viewpager:1.0.0")
     testImplementation("junit:junit:4.13.2")
 }
