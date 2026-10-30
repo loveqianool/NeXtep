@@ -506,6 +506,10 @@ class AppPanel(
         layout.addView(TextView(context).apply {
             text = app.label
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+            // Single line + ellipsis: with 3 x 48dp buttons, a long label
+            // on a narrow panel would otherwise wrap and inflate the row.
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         })
         if (app.isMuted) {

@@ -38,7 +38,7 @@ object ServerHook {
     fun install(module: XposedModule, classLoader: ClassLoader) {
         if (installed) return
         installed = true
-        Log.i(TAG, "ServerHook install v1.2.3")
+        Log.i(TAG, "ServerHook install v1.2.4")
         installDisplayHook(module, classLoader)
         hookSystemReady(module, classLoader)
     }

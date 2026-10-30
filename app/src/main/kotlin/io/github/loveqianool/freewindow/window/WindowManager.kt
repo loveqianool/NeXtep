@@ -39,7 +39,9 @@ object WindowManager : WindowHost {
     private const val TAG = "FreeWindow"
     /** At least this much of a window stays visible, so it can be dragged back. */
     private const val MIN_VISIBLE_DP = 80
-    private const val MIN_SIZE_DP = 200
+    // Title-bar chrome is 200dp (48dp top-left toggle + 4 x 38dp buttons),
+    // so the minimum must exceed it or a smallest window has no drag area.
+    private const val MIN_SIZE_DP = 240
     /** Each window is a VirtualDisplay + Surface + task; cap the count. */
     const val MAX_WINDOWS = 8
 
