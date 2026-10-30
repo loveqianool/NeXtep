@@ -290,7 +290,7 @@ class FreeWindowView @JvmOverloads constructor(
     private fun ensureCollapseIcon() {
         if (collapseIconView != null) return
         val icon = TextView(context).apply {
-            text = "🗕"
+            text = "▲"
             contentDescription = "点击还原窗口"
             textSize = 20f
             setTextColor(android.graphics.Color.WHITE)

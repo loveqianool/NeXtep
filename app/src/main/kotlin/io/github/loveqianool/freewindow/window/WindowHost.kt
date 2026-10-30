@@ -7,7 +7,7 @@ interface WindowHost {
     /** User tapped inside the window content. */
     fun onTap(id: Int)
 
-    /** Collapse button (🗕, left of park): shrink the window to its icon. */
+    /** Collapse button (▲, left of park): shrink the window to its icon. */
     fun onCollapse(id: Int)
 
     /** Tap on a collapsed icon: restore the window to its saved rect. */

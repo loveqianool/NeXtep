@@ -22,7 +22,7 @@ class TitleBar @JvmOverloads constructor(
     attrs: android.util.AttributeSet? = null,
 ) : LinearLayout(context, attrs) {
 
-    private val collapseBtn = makeButton("🗕", "缩成图标")
+    private val collapseBtn = makeButton("▲", "缩成图标")
     private val parkBtn = makeButton("▽", "最小化到后台")
     private val maxBtn = makeButton("⛶", "最大化")
     private val muteBtn = makeButton("🔊", "静音")
