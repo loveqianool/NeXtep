@@ -37,8 +37,6 @@ import java.util.concurrent.atomic.AtomicInteger
  */
 object WindowManager : WindowHost {
     private const val TAG = "FreeWindow"
-    /** Drag within this distance of a usable edge snaps to that edge. */
-    private const val SNAP_DP = 24
     /** At least this much of a window stays visible, so it can be dragged back. */
     private const val MIN_VISIBLE_DP = 80
     private const val MIN_SIZE_DP = 200
@@ -49,8 +47,6 @@ object WindowManager : WindowHost {
     private val displays = ConcurrentHashMap<Int, VirtualDisplay>()
     private val surfaces = ConcurrentHashMap<Int, Surface>()
     private val savedRects = mutableMapOf<Int, Rect>()
-    /** Pre-half-screen rect, restored when a half-screen window is dragged. */
-    private val snapSavedRects = mutableMapOf<Int, Rect>()
     /** Labels rarely change; avoid a PackageManager lookup per window per update. */
     private val labelCache = ConcurrentHashMap<ComponentName, String>()
     /** Last background list actually notified; identical lists skip rebuild. */
@@ -122,7 +118,6 @@ object WindowManager : WindowHost {
         val rec = windows.remove(id) ?: return
         synchronized(zOrder) { zOrder.remove(id) }
         synchronized(savedRects) { savedRects.remove(id) }
-        synchronized(snapSavedRects) { snapSavedRects.remove(id) }
         // AppOps mute is persistent; if this was the last muted window for the
         // package, restore audio so the app isn't silently muted after close.
         if (rec.isMuted) {
@@ -164,7 +159,6 @@ object WindowManager : WindowHost {
     fun toggleMaximize(id: Int) {
         val rec = windows[id] ?: return
         val app = appContext ?: return
-        synchronized(snapSavedRects) { snapSavedRects.remove(id) }
         if (rec.isMaximized) {
             val rect = synchronized(savedRects) { savedRects.remove(id) } ?: defaultRect(app)
             applyRect(id, rect)
@@ -261,22 +255,11 @@ object WindowManager : WindowHost {
         val rec = windows[id] ?: return
         if (rec.isMaximized) return
         val app = appContext ?: return
-        var params = rec.view.layoutParams as? AndroidWindowManager.LayoutParams ?: return
+        val params = rec.view.layoutParams as? AndroidWindowManager.LayoutParams ?: return
         // Hot path (MOVE fires at touch rate): usableRect() queries
-        // WindowMetrics, so compute it once here and reuse it for the
-        // half-screen check, the clamp and the edge snap.
+        // WindowMetrics, so compute it once here for the clamp.
         val usable = usableRect(app)
         val density = app.resources.displayMetrics.density
-        // Dragging a half-screen window restores its pre-snap size first
-        // (desktop-style), then the drag continues from the restored rect.
-        synchronized(snapSavedRects) {
-            val saved = snapSavedRects[id]
-            if (saved != null && isHalfScreenRect(usable, currentRect(rec.view))) {
-                snapSavedRects.remove(id)
-                applyRect(id, Rect(saved))
-                params = rec.view.layoutParams as? AndroidWindowManager.LayoutParams ?: return
-            }
-        }
         params.x += dx
         params.y += dy
         val clamped = clampRect(
@@ -286,38 +269,7 @@ object WindowManager : WindowHost {
         )
         params.x = clamped.left
         params.y = clamped.top
-        snapToEdge(params, clamped, usable, density)
         wm?.updateViewLayout(rec.view, params)
-    }
-
-    /**
-     * Title-bar drag released: dragging to the left/right edge snaps the
-     * window to that half of the usable area (the pre-snap rect is kept so
-     * the next drag restores it). Edge alignment alone is handled by the
-     * snap in [onMove]; this is only the half-screen resize.
-     */
-    override fun onMoveEnd(id: Int) {
-        val rec = windows[id] ?: return
-        if (rec.isMaximized) return
-        val app = appContext ?: return
-        val rect = currentRect(rec.view)
-        val usable = usableRect(app)
-        if (rect.width() >= (usable.width() * 0.9).toInt()) return
-        val density = app.resources.displayMetrics.density
-        val snapPx = (SNAP_DP * density).toInt()
-        val halfW = usable.width() / 2
-        val halfRect = when {
-            rect.left <= usable.left + snapPx ->
-                Rect(usable.left, usable.top, usable.left + halfW, usable.bottom)
-            rect.right >= usable.right - snapPx ->
-                Rect(usable.right - halfW, usable.top, usable.right, usable.bottom)
-            else -> return
-        }
-        synchronized(snapSavedRects) {
-            if (!snapSavedRects.containsKey(id)) snapSavedRects[id] = Rect(rect)
-        }
-        applyRect(id, halfRect)
-        Log.i(TAG, "snapped to half id=$id rect=$halfRect")
     }
 
     override fun onResizeCommit(id: Int, rect: android.graphics.Rect) {
@@ -331,8 +283,6 @@ object WindowManager : WindowHost {
             return
         }
         val app = appContext ?: return
-        // Manual resize replaces any half-screen snap.
-        synchronized(snapSavedRects) { snapSavedRects.remove(id) }
         val clamped = clampRect(rect, usableRect(app), app.resources.displayMetrics.density)
         val params = rec.view.layoutParams as? AndroidWindowManager.LayoutParams ?: run {
             Log.i(TAG, "onResizeCommit: bad layoutParams")
@@ -729,31 +679,6 @@ object WindowManager : WindowHost {
         if (right - left < minPx) left = maxOf(right - minPx, usable.left)
         if (bottom - top < minPx) top = maxOf(bottom - minPx, usable.top)
         return Rect(left, top, right, bottom)
-    }
-
-    /** Snap [params] to a usable edge when [rect] is within [SNAP_DP] of it. */
-    private fun snapToEdge(
-        params: AndroidWindowManager.LayoutParams,
-        rect: Rect,
-        usable: Rect,
-        density: Float,
-    ) {
-        val snapPx = (SNAP_DP * density).toInt()
-        if (kotlin.math.abs(rect.left - usable.left) <= snapPx) {
-            params.x = usable.left
-        } else if (kotlin.math.abs(rect.right - usable.right) <= snapPx) {
-            params.x = usable.right - rect.width()
-        }
-        if (kotlin.math.abs(rect.top - usable.top) <= snapPx) {
-            params.y = usable.top
-        } else if (kotlin.math.abs(rect.bottom - usable.bottom) <= snapPx) {
-            params.y = usable.bottom - rect.height()
-        }
-    }
-
-    private fun isHalfScreenRect(usable: Rect, rect: Rect): Boolean {
-        return rect.width() == usable.width() / 2 &&
-            (rect.left == usable.left || rect.right == usable.right)
     }
 
     /**

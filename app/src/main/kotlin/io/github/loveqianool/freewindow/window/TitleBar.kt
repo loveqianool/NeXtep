@@ -100,11 +100,7 @@ class TitleBar @JvmOverloads constructor(
                 return true
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                val wasDragging = dragging
                 dragging = false
-                if (wasDragging && event.actionMasked == MotionEvent.ACTION_UP) {
-                    host.onMoveEnd(windowId)
-                }
                 return true
             }
         }
