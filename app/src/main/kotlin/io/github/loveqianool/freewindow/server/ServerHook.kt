@@ -144,6 +144,11 @@ object ServerHook {
             Log.i(TAG, "mute receiver registered")
         } catch (e: Throwable) {
             Log.w(TAG, "mute receiver install failed", e)
+            // The HandlerThread is useless without a registered receiver,
+            // and a failed install resets the started flag so the next
+            // display-config trigger retries — without quitting here,
+            // every retry would leak another thread.
+            runCatching { thread.quit() }
             return false
         }
         // Restore: clear any persistent mute left by a crash/reboot.

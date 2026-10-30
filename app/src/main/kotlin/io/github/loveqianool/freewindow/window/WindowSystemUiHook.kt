@@ -68,8 +68,12 @@ object WindowSystemUiHook {
                                         "FreeWindow：已达 ${WindowManager.MAX_WINDOWS} 个窗口上限，先关掉一个再开",
                                         Toast.LENGTH_SHORT,
                                     ).show()
-                                } else {
-                                    WindowManager.openApp(ctx, component)
+                                } else if (WindowManager.openApp(ctx, component) < 0) {
+                                    Toast.makeText(
+                                        ctx,
+                                        "FreeWindow：打开窗口失败",
+                                        Toast.LENGTH_SHORT,
+                                    ).show()
                                 }
                             },
                             onWindowSelected = { windowId ->

@@ -145,7 +145,15 @@ object WindowManager : WindowHost {
         val rect = clampRect(defaultRect(app, componentName), usableRect(app), app.resources.displayMetrics.density)
         val view = FreeWindowView(app, id, this)
         view.onSurfaceReady = { surface -> onSurfaceAvailable(id, surface) }
-        wmRef.addView(view, windowParams(rect))
+        // addView must not throw into the panel click handler: an
+        // uncaught exception on SystemUI's main thread kills SystemUI
+        // and with it every free window. Fail with -1 instead, and let
+        // the caller tell the user (the panel does so on -1).
+        val added = runCatching { wmRef.addView(view, windowParams(rect)) }.isSuccess
+        if (!added) {
+            Log.i(TAG, "openApp id=$id: addView failed")
+            return -1
+        }
         synchronized(zOrder) { zOrder.add(id) }
         // If the same package already has a muted window, inherit its state.
         // (The unmute sync for a fresh package happens in onSurfaceAvailable,

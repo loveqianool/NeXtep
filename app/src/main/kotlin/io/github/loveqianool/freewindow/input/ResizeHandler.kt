@@ -123,16 +123,24 @@ class ResizeHandler(
                 previewRect.set(start.left, start.top, start.left + newW, start.top + newH)
                 showPreview(previewRect)
             }
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+            MotionEvent.ACTION_UP -> {
                 hidePreview()
-                if (!moved && event.actionMasked == MotionEvent.ACTION_UP) {
+                if (!moved) {
                     callback.onResizeAreaTap()
-                } else if (moved) {
+                } else {
                     // Host's clampRect returns a new Rect and never mutates
                     // its input, but copy once here so the reused previewRect
                     // can never leak into the host's state.
                     callback.onResizeCommit(Rect(previewRect))
                 }
+                startRect = null
+                startUsable = null
+            }
+            MotionEvent.ACTION_CANCEL -> {
+                // Cancelled, not released: discard the preview without
+                // committing it. The old shared UP/CANCEL branch committed
+                // a partial resize whenever the system aborted the gesture.
+                hidePreview()
                 startRect = null
                 startUsable = null
             }
@@ -207,6 +215,16 @@ class ResizeHandler(
         } else {
             runCatching { windowManager.updateViewLayout(view, params) }
         }
+    }
+
+    /**
+     * Drop the preview without committing. Called by the host view when
+     * it detaches mid-drag (e.g. the window is closed while resizing):
+     * without this the preview is an independent system window and would
+     * stay on screen until SystemUI restarts, since no UP ever arrives.
+     */
+    fun cleanup() {
+        hidePreview()
     }
 
     private fun hidePreview() {

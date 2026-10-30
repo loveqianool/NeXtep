@@ -27,7 +27,7 @@ import kotlin.math.hypot
  * A free window: vertical stack of [TitleBar] (outside, on top) + [TextureView]
  * showing the VirtualDisplay content.
  *
- * - Windowed mode: title bar is visible above the content (44dp). The VD
+ * - Windowed mode: title bar is visible above the content (38dp). The VD
  *   matches the content size (window minus title bar).
  * - Maximized: title bar is GONE, content takes the full window.
  * - Touches on the content are forwarded to the VirtualDisplay via
@@ -317,6 +317,16 @@ class FreeWindowView @JvmOverloads constructor(
             }
         }
         Log.i(TAG, "FreeWindowView created window=$windowId")
+    }
+
+    override fun onDetachedFromWindow() {
+        // A resize drag interrupted by detach (window closed, or the
+        // bring-to-front re-add) never delivers UP, so the preview system
+        // window would otherwise be left on screen. Detach is also where
+        // the touch handler's queued events are dropped (parent == null),
+        // so cleaning the preview here is consistent with that.
+        resizeHandler.cleanup()
+        super.onDetachedFromWindow()
     }
 
     /**

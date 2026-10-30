@@ -61,6 +61,9 @@ class AppPanel(
         /** Lowercased once at query time; search/sort must not redo it per app. */
         /** Pinned locale: default-locale lowercase breaks for some locales (e.g. Turkish I). */
         val lowerLabel: String = label.lowercase(java.util.Locale.ROOT),
+        /** Same once-only rule: search also matches package/class names. */
+        val lowerPackage: String = component.packageName.lowercase(java.util.Locale.ROOT),
+        val lowerClass: String = component.className.lowercase(java.util.Locale.ROOT),
     )
 
     /** One app row: the entry plus its "已打开" state at render time. */
@@ -270,8 +273,16 @@ class AppPanel(
         val scroll = windowScroll ?: return
         val box = windowContainer ?: return
         val metrics = context.resources.displayMetrics
-        val dialogWidth = (metrics.widthPixels * 0.85).toInt()
-        val dialogHeight = (metrics.heightPixels * 0.7).toInt()
+        // Prefer the dialog's real size when it has been laid out; the
+        // 85%/70% figures are only a first-refresh fallback (the decor
+        // view is 0x0 before the first layout pass). Using the assumed
+        // size unconditionally made the cap wrong whenever the dialog's
+        // actual size differed from the assumption.
+        val decor = dialog?.window?.decorView
+        val dialogWidth = decor?.width?.takeIf { it > 0 }
+            ?: (metrics.widthPixels * 0.85).toInt()
+        val dialogHeight = decor?.height?.takeIf { it > 0 }
+            ?: (metrics.heightPixels * 0.7).toInt()
         val widthSpec = View.MeasureSpec.makeMeasureSpec(
             dialogWidth - dp(32),
             View.MeasureSpec.EXACTLY,
@@ -387,7 +398,11 @@ class AppPanel(
         val q = query.trim().lowercase(java.util.Locale.ROOT)
         val filtered =
             if (q.isEmpty()) allApps
-            else allApps.filter { it.lowerLabel.contains(q) }
+            else allApps.filter {
+                it.lowerLabel.contains(q) ||
+                    it.lowerPackage.contains(q) ||
+                    it.lowerClass.contains(q)
+            }
         if (filtered.isEmpty()) {
             emptyView.text = if (allApps.isEmpty()) "加载中…" else "没有匹配的应用"
             emptyView.visibility = View.VISIBLE
