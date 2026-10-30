@@ -9,7 +9,6 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.util.Log
-import io.github.loveqianool.freewindow.R
 
 /**
  * Persistent notification for the free-window module.
@@ -154,7 +153,12 @@ object FreeWindowNotification {
         }
 
         val builder = Notification.Builder(context, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_freewindow)
+            // Do NOT use a module drawable here: this code runs injected
+            // into SystemUI, so R ids from the module APK do not resolve
+            // against the SystemUI context, and the system drops the
+            // notification when it cannot load the icon. The framework
+            // icon is always available in the host process.
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setContentTitle("FreeWindow")
             .setContentText(
                 if (parkedApps.isEmpty()) "点击打开应用面板"
