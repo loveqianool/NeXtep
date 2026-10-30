@@ -12,8 +12,9 @@ import android.widget.TextView
 import kotlin.math.hypot
 
 /**
- * Title bar for a free window: drag to move, plus collapse / park / fit /
- * crop / maximize / mute / close buttons. 38dp tall, semi-transparent black.
+ * Title bar for a free window: drag to move, plus a hamburger menu
+ * (collapse / fit / crop / mute) and park / maximize / close buttons.
+ * 38dp tall, semi-transparent black.
  */
 class TitleBar @JvmOverloads constructor(
     context: Context,
@@ -22,13 +23,14 @@ class TitleBar @JvmOverloads constructor(
     attrs: android.util.AttributeSet? = null,
 ) : LinearLayout(context, attrs) {
 
-    private val collapseBtn = makeButton("▲", "缩成图标")
+    private val menuBtn = makeButton("☰", "更多功能")
     private val parkBtn = makeButton("▽", "最小化到后台")
-    private val fitBtn = makeButton("▭", "按应用宽高比适配")
-    private val cropBtn = makeButton("✂", "裁剪画面")
     private val maxBtn = makeButton("⛶", "最大化")
-    private val muteBtn = makeButton("🔊", "静音")
     private val closeBtn = makeButton("✕", "关闭窗口")
+
+    // Menu item text follows current state; refreshed each time the menu opens.
+    private var muted = false
+    private var cropped = false
 
     private var lastRawX = 0f
     private var lastRawY = 0f
@@ -45,20 +47,14 @@ class TitleBar @JvmOverloads constructor(
             layoutParams = LayoutParams(0, LayoutParams.MATCH_PARENT, 1f)
         }
         addView(spacer)
-        addView(collapseBtn)
+        addView(menuBtn)
         addView(parkBtn)
-        addView(fitBtn)
-        addView(cropBtn)
         addView(maxBtn)
-        addView(muteBtn)
         addView(closeBtn)
 
-        collapseBtn.setOnClickListener { host.onCollapse(windowId) }
+        menuBtn.setOnClickListener { showMenu() }
         parkBtn.setOnClickListener { host.onPark(windowId) }
-        fitBtn.setOnClickListener { host.onFitAspect(windowId) }
-        cropBtn.setOnClickListener { host.onCrop(windowId) }
         maxBtn.setOnClickListener { host.onToggleMaximize(windowId) }
-        muteBtn.setOnClickListener { host.onToggleMute(windowId) }
         closeBtn.setOnClickListener { host.onClose(windowId) }
 
         // Entire bar is draggable, including on buttons: intercept the touch
@@ -123,8 +119,7 @@ class TitleBar @JvmOverloads constructor(
     }
 
     fun setMuted(muted: Boolean) {
-        muteBtn.text = if (muted) "🔇" else "🔊"
-        muteBtn.contentDescription = if (muted) "取消静音" else "静音"
+        this.muted = muted
     }
 
     fun setMaximized(maximized: Boolean) {
@@ -133,7 +128,27 @@ class TitleBar @JvmOverloads constructor(
     }
 
     fun setCropped(cropped: Boolean) {
-        cropBtn.contentDescription = if (cropped) "恢复完整画面" else "裁剪画面"
+        this.cropped = cropped
+    }
+
+    // Built fresh on every open so mute/crop labels track current state.
+    private fun showMenu() {
+        val popup = android.widget.PopupMenu(context, menuBtn)
+        val menu = popup.menu
+        menu.add(0, MENU_COLLAPSE, 0, "缩成图标")
+        menu.add(0, MENU_FIT, 1, "按应用宽高比适配")
+        menu.add(0, MENU_CROP, 2, if (cropped) "恢复完整画面" else "裁剪画面")
+        menu.add(0, MENU_MUTE, 3, if (muted) "取消静音" else "静音")
+        popup.setOnMenuItemClickListener { item ->
+            when (item.itemId) {
+                MENU_COLLAPSE -> host.onCollapse(windowId)
+                MENU_FIT -> host.onFitAspect(windowId)
+                MENU_CROP -> host.onCrop(windowId)
+                MENU_MUTE -> host.onToggleMute(windowId)
+            }
+            true
+        }
+        popup.show()
     }
 
     private fun makeButton(text: String, description: String): TextView {
@@ -156,5 +171,9 @@ class TitleBar @JvmOverloads constructor(
 
     companion object {
         private const val TAG = "FreeWindow"
+        private const val MENU_COLLAPSE = 1
+        private const val MENU_FIT = 2
+        private const val MENU_CROP = 3
+        private const val MENU_MUTE = 4
     }
 }
