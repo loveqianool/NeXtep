@@ -47,7 +47,7 @@ class ResizeHandler(
 
     companion object {
         const val HANDLE_DP = 36
-        // Keep in sync with WindowManager: title-bar chrome alone is 238dp.
+        // Keep in sync with WindowManager: title-bar buttons total 228dp.
         const val MIN_SIZE_DP = 240
         const val TAP_SLOP_DP = 8
         private const val TAG = "FreeWindow"

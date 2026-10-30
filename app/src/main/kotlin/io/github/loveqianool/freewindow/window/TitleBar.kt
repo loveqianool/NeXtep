@@ -12,7 +12,7 @@ import android.widget.TextView
 import kotlin.math.hypot
 
 /**
- * Title bar for a free window: drag to move, plus collapse / park /
+ * Title bar for a free window: drag to move, plus collapse / park / fit /
  * maximize / mute / close buttons. 38dp tall, semi-transparent black.
  */
 class TitleBar @JvmOverloads constructor(
@@ -24,6 +24,7 @@ class TitleBar @JvmOverloads constructor(
 
     private val collapseBtn = makeButton("▲", "缩成图标")
     private val parkBtn = makeButton("▽", "最小化到后台")
+    private val fitBtn = makeButton("▭", "按应用宽高比适配")
     private val maxBtn = makeButton("⛶", "最大化")
     private val muteBtn = makeButton("🔊", "静音")
     private val closeBtn = makeButton("✕", "关闭窗口")
@@ -45,12 +46,14 @@ class TitleBar @JvmOverloads constructor(
         addView(spacer)
         addView(collapseBtn)
         addView(parkBtn)
+        addView(fitBtn)
         addView(maxBtn)
         addView(muteBtn)
         addView(closeBtn)
 
         collapseBtn.setOnClickListener { host.onCollapse(windowId) }
         parkBtn.setOnClickListener { host.onPark(windowId) }
+        fitBtn.setOnClickListener { host.onFitAspect(windowId) }
         maxBtn.setOnClickListener { host.onToggleMaximize(windowId) }
         muteBtn.setOnClickListener { host.onToggleMute(windowId) }
         closeBtn.setOnClickListener { host.onClose(windowId) }

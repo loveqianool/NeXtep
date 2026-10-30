@@ -4,6 +4,7 @@ import android.app.ActivityManager
 import android.app.ActivityOptions
 import android.content.ComponentName
 import android.content.Context
+import android.content.pm.ActivityInfo
 import android.content.Intent
 import android.graphics.PixelFormat
 import android.graphics.Rect
@@ -35,6 +36,8 @@ import java.util.concurrent.atomic.AtomicInteger
  * - [collapseWindow]: shrink the window to a draggable 48dp icon; the VD
  *   keeps its size, so expanding restores the exact window layout.
  * - [expandCollapsed]: restore a collapsed window to its saved rect.
+ * - [fitAspect]: resize a window to the app's aspect ratio (initial
+ *   windows already follow the app's declared orientation).
  * - [toggleMaximize]: fullscreen the window within the usable display area.
  * - [setMuted]: per-window audio mute via AppOps ([WindowMute]).
  */
@@ -42,8 +45,9 @@ object WindowManager : WindowHost {
     private const val TAG = "FreeWindow"
     /** At least this much of a window stays visible, so it can be dragged back. */
     private const val MIN_VISIBLE_DP = 80
-    // Title-bar chrome is 238dp (48dp top-left toggle + 5 x 38dp buttons),
-    // so the minimum must exceed it or a smallest window has no drag area.
+    // Title-bar buttons total 6 x 38dp = 228dp (the 48dp top-left toggle
+    // overlays the bar, it does not add width), so the minimum must
+    // exceed the button total or buttons would overflow a smallest window.
     private const val MIN_SIZE_DP = 240
     /** Each window is a VirtualDisplay + Surface + task; cap the count. */
     const val MAX_WINDOWS = 8
@@ -58,6 +62,8 @@ object WindowManager : WindowHost {
     private val savedRects = mutableMapOf<Int, Rect>()
     /** Labels rarely change; avoid a PackageManager lookup per window per update. */
     private val labelCache = ConcurrentHashMap<ComponentName, String>()
+    /** Declared orientation / aspect per app; same reason, one lookup per app. */
+    private val aspectCache = ConcurrentHashMap<ComponentName, AspectInfo>()
     /** Last background list actually notified; identical lists skip rebuild. */
     private var lastNotifiedBackground: List<FreeWindowNotification.ParkedApp>? = null
     /** True while exit() is closing windows one by one. */
@@ -102,7 +108,10 @@ object WindowManager : WindowHost {
         val id = nextId.getAndIncrement()
         // Clamp like move/resize do: the default rect is computed from
         // raw screen pixels and could otherwise sit under a system bar.
-        val rect = clampRect(defaultRect(app), usableRect(app), app.resources.displayMetrics.density)
+        // The default rect follows the app's declared orientation, so a
+        // landscape app does not open in a portrait window (which would
+        // letterbox it with side bars from the first frame).
+        val rect = clampRect(defaultRect(app, componentName), usableRect(app), app.resources.displayMetrics.density)
         val view = FreeWindowView(app, id, this)
         view.onSurfaceReady = { surface -> onSurfaceAvailable(id, surface) }
         wmRef.addView(view, windowParams(rect))
@@ -185,7 +194,7 @@ object WindowManager : WindowHost {
         val rec = windows[id] ?: return
         if (!rec.isCollapsed) return
         val app = appContext ?: return
-        val rect = synchronized(savedRects) { savedRects.remove(id) } ?: defaultRect(app)
+        val rect = synchronized(savedRects) { savedRects.remove(id) } ?: defaultRect(app, rec.componentName)
         // Expand the view first: applyRect() sizes the VD from the view's
         // title-bar visibility, which is only correct once the content is
         // back (a collapsed view would size the VD to the icon).
@@ -201,6 +210,43 @@ object WindowManager : WindowHost {
         if (windows[id] == null) return
         updateNotification()
         Log.i(TAG, "expandCollapsed id=$id rect=$rect")
+    }
+
+    /**
+     * Resize the window to the app's aspect ratio, keeping the top-left
+     * corner and the window's long side, shrinking only the short side.
+     * Shrinking (not growing) keeps the window inside the usable area;
+     * applyRect() still clamps it (240dp minimum may soften the ratio on
+     * very small windows, which is better than overflowing the screen).
+     *
+     * Target ratio (long / short): the app's declared maxAspectRatio when
+     * present — that is exactly the ratio the system letterboxes to, so
+     * matching it removes the bars — otherwise the device screen aspect.
+     * Direction: the app's declared orientation when present, otherwise
+     * the window's current direction. A maximized or collapsed window is
+     * restored first (the fit button only exists on a windowed title bar,
+     * but panel callers could reach here in either state).
+     */
+    fun fitAspect(id: Int) {
+        val rec0 = windows[id] ?: return
+        if (rec0.isCollapsed) expandCollapsed(id)
+        if (windows[id]?.isMaximized == true) toggleMaximize(id)
+        val rec = windows[id] ?: return
+        if (rec.isCollapsed || rec.isMaximized) return
+        val app = appContext ?: return
+        val aspect = aspectFor(rec.componentName)
+        val rect = currentRect(rec.view)
+        val longPx = maxOf(rect.width(), rect.height())
+        val ratio = aspect?.ratio ?: screenAspect(app)
+        val shortPx = (longPx / ratio).toInt()
+        val landscape = aspect?.landscape ?: (rect.width() >= rect.height())
+        val fitted = if (landscape) {
+            Rect(rect.left, rect.top, rect.left + longPx, rect.top + shortPx)
+        } else {
+            Rect(rect.left, rect.top, rect.left + shortPx, rect.top + longPx)
+        }
+        applyRect(id, fitted)
+        Log.i(TAG, "fitAspect id=$id rect=$rect fitted=$fitted ratio=$ratio landscape=$landscape")
     }
 
     /** Hide the window; the app keeps running on its VirtualDisplay. */
@@ -234,7 +280,7 @@ object WindowManager : WindowHost {
         val rec = windows[id] ?: return
         val app = appContext ?: return
         if (rec.isMaximized) {
-            val rect = synchronized(savedRects) { savedRects.remove(id) } ?: defaultRect(app)
+            val rect = synchronized(savedRects) { savedRects.remove(id) } ?: defaultRect(app, rec.componentName)
             applyRect(id, rect)
             rec.view.setMaximized(false)
             windows[id] = rec.copy(isMaximized = false)
@@ -378,6 +424,8 @@ object WindowManager : WindowHost {
     override fun onTap(id: Int) = bringToFront(id)
 
     override fun onCollapse(id: Int) = collapseWindow(id)
+
+    override fun onFitAspect(id: Int) = fitAspect(id)
 
     override fun onExpand(id: Int) = expandCollapsed(id)
 
@@ -817,13 +865,62 @@ object WindowManager : WindowHost {
         }
     }
 
-    private fun defaultRect(app: Context): Rect {
+    private fun defaultRect(app: Context, component: ComponentName? = null): Rect {
         val m = app.resources.displayMetrics
-        val w = (minOf(m.widthPixels, m.heightPixels) * 0.72).toInt()
-        val h = minOf((w * 1.25).toInt(), (maxOf(m.widthPixels, m.heightPixels) * 0.8).toInt())
+        val shortSide = minOf(m.widthPixels, m.heightPixels)
+        val longSide = maxOf(m.widthPixels, m.heightPixels)
+        // Portrait default, mirrored for a landscape-declared app: the
+        // short side is 72% of the screen's short side, the long side
+        // 1.25x that (capped at 80% of the screen's long side).
+        val shortPx = (shortSide * 0.72).toInt()
+        val longPx = minOf((shortPx * 1.25).toInt(), (longSide * 0.8).toInt())
+        val landscape = component?.let { aspectFor(it)?.landscape } == true
+        val w = if (landscape) longPx else shortPx
+        val h = if (landscape) shortPx else longPx
         val left = (m.widthPixels - w) / 2
         val top = (m.heightPixels - h) / 3
         return Rect(left, top, left + w, top + h)
+    }
+
+    /**
+     * An app's declared aspect: direction from screenOrientation (null
+     * when the app follows the display, e.g. unspecified / sensor), ratio
+     * from maxAspectRatio when declared, else the device screen aspect.
+     * maxAspectRatio is long / short; a letterboxed app is boxed to
+     * exactly that ratio, so it is the fit target when present.
+     */
+    private data class AspectInfo(val landscape: Boolean?, val ratio: Float)
+
+    private fun aspectFor(component: ComponentName): AspectInfo? {
+        aspectCache[component]?.let { return it }
+        val app = appContext ?: return null
+        val info = runCatching {
+            app.packageManager.getActivityInfo(component, 0)
+        }.getOrNull() ?: return null
+        val landscape = when (info.screenOrientation) {
+            ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE,
+            ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE,
+            ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE,
+            ActivityInfo.SCREEN_ORIENTATION_USER_LANDSCAPE
+            -> true
+            ActivityInfo.SCREEN_ORIENTATION_PORTRAIT,
+            ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT,
+            ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT,
+            ActivityInfo.SCREEN_ORIENTATION_USER_PORTRAIT
+            -> false
+            else -> null
+        }
+        val ratio = if (info.maxAspectRatio > 0f) info.maxAspectRatio else screenAspect(app)
+        val aspect = AspectInfo(landscape, ratio)
+        aspectCache[component] = aspect
+        return aspect
+    }
+
+    /** Device screen aspect, long / short, as a fallback fit ratio. */
+    private fun screenAspect(app: Context): Float {
+        val m = app.resources.displayMetrics
+        val shortSide = minOf(m.widthPixels, m.heightPixels).coerceAtLeast(1)
+        return maxOf(m.widthPixels, m.heightPixels).toFloat() / shortSide
     }
 
     private fun usableRect(app: Context): Rect {

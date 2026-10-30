@@ -10,6 +10,9 @@ interface WindowHost {
     /** Collapse button (▲, left of park): shrink the window to its icon. */
     fun onCollapse(id: Int)
 
+    /** Fit button (▭): resize the window to the app's aspect ratio. */
+    fun onFitAspect(id: Int)
+
     /** Tap on a collapsed icon: restore the window to its saved rect. */
     fun onExpand(id: Int)
 
