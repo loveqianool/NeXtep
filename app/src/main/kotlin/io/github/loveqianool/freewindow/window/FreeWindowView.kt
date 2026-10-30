@@ -59,7 +59,15 @@ class FreeWindowView @JvmOverloads constructor(
      * through [TouchForwarder.forward] as well, which obtained a second copy
      * on every touch event.
      */
-    private fun forwardOrdered(event: android.view.MotionEvent, did: Int, extraDelay: Long) {
+    /**
+     * Resolve the display id at delivery time, not at event time: tapping
+     * a background window brings it to front first (Surface/VD rebuild,
+     * new display id), and a DOWN delayed 233ms for the focus transition
+     * must go to the new display, not the released old one. Dropping the
+     * whole gesture when there is still no display (or the view is already
+     * detached) is better than a DOWN-less MOVE/UP on another display.
+     */
+    private fun forwardOrdered(event: android.view.MotionEvent, extraDelay: Long) {
         val copy = android.view.MotionEvent.obtain(event)
         val at = maxOf(
             android.os.SystemClock.uptimeMillis() + extraDelay,
@@ -67,7 +75,10 @@ class FreeWindowView @JvmOverloads constructor(
         )
         lastForwardAt = at
         touchHandler.postAtTime({
-            TouchForwarder.forwardOwned(copy, did)
+            val didNow = if (parent == null) -1 else displayId
+            if (didNow >= 0) {
+                TouchForwarder.forwardOwned(copy, didNow)
+            }
             copy.recycle()
         }, at)
     }
@@ -78,6 +89,7 @@ class FreeWindowView @JvmOverloads constructor(
         android.view.WindowManager.LayoutParams.TYPE_PHONE,
         object : ResizeHandler.Callback {
             override fun currentRect(): android.graphics.Rect = host.currentRect(windowId)
+            override fun usableRect(): android.graphics.Rect = host.usableRect(windowId)
             override fun onResizeCommit(rect: android.graphics.Rect) =
                 host.onResizeCommit(windowId, rect)
             // Tap on the resize area no longer arms anything: the top-left
@@ -130,7 +142,6 @@ class FreeWindowView @JvmOverloads constructor(
             override fun onSurfaceTextureUpdated(st: SurfaceTexture) = Unit
         }
         textureView.setOnTouchListener { _, event ->
-            val did = displayId
             if (event.actionMasked == MotionEvent.ACTION_DOWN) {
                 // Delay DOWN: updateViewLayout (focusable) is async; the app
                 // requests the IME on DOWN, which needs the window to already
@@ -140,12 +151,13 @@ class FreeWindowView @JvmOverloads constructor(
                 ImeHelper.setFocusable(this@FreeWindowView, true)
                 resizeHandler.setIndicatorVisible(true)
                 host.onTap(windowId)
-                if (did >= 0) {
-                    forwardOrdered(event, did, if (needDelay) 233L else 0L)
-                }
-            } else if (did >= 0) {
+                // Always queue: the display id is resolved at delivery time,
+                // so a bring-to-front rebuild between DOWN and delivery
+                // still lands the whole gesture on the new display.
+                forwardOrdered(event, if (needDelay) 233L else 0L)
+            } else {
                 // MOVE/UP must not overtake the delayed DOWN; queue them in order.
-                forwardOrdered(event, did, 0L)
+                forwardOrdered(event, 0L)
             }
             true
         }

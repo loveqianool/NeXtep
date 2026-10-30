@@ -21,8 +21,8 @@ import android.view.WindowManager
  * - While dragging, a bright-cyan (#FF00E5FF) 3dp dashed preview rect is
  *   shown in an independent system window (TYPE_PHONE,
  *   NOT_FOCUSABLE|NOT_TOUCHABLE); the window itself is not resized yet.
- *   The preview is clamped to the screen, and the commit is clamped again
- *   by the host to the usable area.
+ *   The preview is clamped to the usable area, and the commit is clamped
+ *   again by the host to the same area.
  * - On release the new rect is committed through [Callback.onResizeCommit];
  *   the host then resizes the VirtualDisplay and re-lays out the content.
  * - A plain tap (no drag) on the area is reported via
@@ -37,6 +37,8 @@ class ResizeHandler(
     interface Callback {
         /** Current window rect in screen coordinates, used as the drag start. */
         fun currentRect(): Rect
+        /** Usable area; the preview is clamped to it, like the commit. */
+        fun usableRect(): Rect
         /** Drag finished: commit the resize for real. */
         fun onResizeCommit(rect: Rect)
         /** Tap without drag on the resize area. */
@@ -68,6 +70,8 @@ class ResizeHandler(
     }
 
     private var startRect: Rect? = null
+    /** Usable area at gesture start; querying WindowMetrics per MOVE would be wasteful. */
+    private var startUsable: Rect? = null
     /** Reused across MOVEs; only the UP commit copies it (once per gesture). */
     private val previewRect = Rect()
     private var startRawX = 0f
@@ -81,6 +85,7 @@ class ResizeHandler(
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 startRect = Rect(callback.currentRect())
+                startUsable = callback.usableRect()
                 startRawX = event.rawX
                 startRawY = event.rawY
                 downX = event.rawX
@@ -95,9 +100,21 @@ class ResizeHandler(
                     if (dx * dx + dy * dy > tapSlopPxSquared) moved = true
                 }
                 val start = startRect ?: return@OnTouchListener true
+                // Clamp to the usable area, not the whole screen: otherwise
+                // the preview can show a size larger than the commit, which
+                // the host clamps back to the usable area on release.
+                val usable = startUsable ?: Rect()
                 val metrics = context.resources.displayMetrics
-                val maxW = (metrics.widthPixels - start.left).coerceAtLeast(minPx)
-                val maxH = (metrics.heightPixels - start.top).coerceAtLeast(minPx)
+                val maxW = if (usable.isEmpty) {
+                    (metrics.widthPixels - start.left)
+                } else {
+                    (usable.right - start.left)
+                }.coerceAtLeast(minPx)
+                val maxH = if (usable.isEmpty) {
+                    (metrics.heightPixels - start.top)
+                } else {
+                    (usable.bottom - start.top)
+                }.coerceAtLeast(minPx)
                 val newW = (start.width() + event.rawX - startRawX).toInt()
                     .coerceIn(minPx, maxW)
                 val newH = (start.height() + event.rawY - startRawY).toInt()
@@ -116,6 +133,7 @@ class ResizeHandler(
                     callback.onResizeCommit(Rect(previewRect))
                 }
                 startRect = null
+                startUsable = null
             }
         }
         true

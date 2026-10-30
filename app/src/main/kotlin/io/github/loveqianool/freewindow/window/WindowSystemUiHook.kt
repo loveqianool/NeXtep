@@ -2,6 +2,7 @@ package io.github.loveqianool.freewindow.window
 
 import android.app.Application
 import android.util.Log
+import android.widget.Toast
 import io.github.loveqianool.freewindow.notification.AppPanel
 import io.github.loveqianool.freewindow.notification.FreeWindowNotification
 import java.util.concurrent.atomic.AtomicBoolean
@@ -53,6 +54,12 @@ object WindowSystemUiHook {
                                 val existing = WindowManager.findWindowId(component)
                                 if (existing != null) {
                                     WindowManager.unparkWindow(existing)
+                                } else if (WindowManager.isAtLimit()) {
+                                    Toast.makeText(
+                                        ctx,
+                                        "FreeWindow：已达 ${WindowManager.MAX_WINDOWS} 个窗口上限，先关掉一个再开",
+                                        Toast.LENGTH_SHORT,
+                                    ).show()
                                 } else {
                                     WindowManager.openApp(ctx, component)
                                 }

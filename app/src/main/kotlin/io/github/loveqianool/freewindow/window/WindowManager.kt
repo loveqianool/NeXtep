@@ -40,6 +40,10 @@ object WindowManager : WindowHost {
     /** At least this much of a window stays visible, so it can be dragged back. */
     private const val MIN_VISIBLE_DP = 80
     private const val MIN_SIZE_DP = 200
+    /** Each window is a VirtualDisplay + Surface + task; cap the count. */
+    const val MAX_WINDOWS = 8
+
+    fun isAtLimit(): Boolean = windows.size >= MAX_WINDOWS
 
     /** All windows by id. */
     private val windows: MutableMap<Int, WindowRecord> = ConcurrentHashMap()
@@ -86,8 +90,14 @@ object WindowManager : WindowHost {
             Log.w(TAG, "openApp: WindowManager unavailable")
             return -1
         }
+        if (isAtLimit()) {
+            Log.w(TAG, "openApp: at window limit ($MAX_WINDOWS)")
+            return -1
+        }
         val id = nextId.getAndIncrement()
-        val rect = defaultRect(app)
+        // Clamp like move/resize do: the default rect is computed from
+        // raw screen pixels and could otherwise sit under a system bar.
+        val rect = clampRect(defaultRect(app), usableRect(app), app.resources.displayMetrics.density)
         val view = FreeWindowView(app, id, this)
         view.onSurfaceReady = { surface -> onSurfaceAvailable(id, surface) }
         wmRef.addView(view, windowParams(rect))
@@ -243,6 +253,11 @@ object WindowManager : WindowHost {
     }
 
     // ------------------------------------------------------------ WindowHost
+
+    override fun usableRect(id: Int): Rect {
+        val app = appContext ?: return Rect()
+        return usableRect(app)
+    }
 
     override fun onTap(id: Int) = bringToFront(id)
 
@@ -718,15 +733,18 @@ object WindowManager : WindowHost {
     // 之前叫 getParkedApps，名不副实，2026-10-18 改名。
     fun getBackgroundApps(): List<FreeWindowNotification.ParkedApp> {
         val app = appContext ?: return emptyList()
-        return windows.values
-            .filter { it.isParked || it.isMaximized }
-            .map { rec ->
+        // Same order as the panel (topmost first): windows.values iterates
+        // in hash order, which listed the notification in the opposite order.
+        val order = synchronized(zOrder) { zOrder.reversed() }
+        return order.mapNotNull { id ->
+            windows[id]?.takeIf { it.isParked || it.isMaximized }?.let { rec ->
                 FreeWindowNotification.ParkedApp(
                     rec.id,
                     appLabel(app, rec.componentName),
                     rec.isMaximized,
                 )
             }
+        }
     }
 
     /** All windows for the panel, topmost first, with full state for rows. */

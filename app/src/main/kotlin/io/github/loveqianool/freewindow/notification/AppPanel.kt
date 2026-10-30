@@ -84,6 +84,9 @@ class AppPanel(
         val dialog = Dialog(context, android.R.style.Theme_DeviceDefault_Dialog).apply {
             setCancelable(true)
             setCanceledOnTouchOutside(true)
+            // Outside touch / back dismisses without going through
+            // dismiss(), so clean up here too (idempotent with it).
+            setOnDismissListener { clearPanelFields() }
         }
 
         val root = LinearLayout(context).apply {
@@ -193,11 +196,17 @@ class AppPanel(
 
     fun dismiss() {
         dialog?.dismiss()
+        clearPanelFields()
+    }
+
+    private fun clearPanelFields() {
         dialog = null
         windowContainer = null
         windowScroll = null
         appRecyclerView = null
         appEmptyView = null
+        pendingSearch?.let { mainHandler.removeCallbacks(it) }
+        pendingSearch = null
         appAdapter.submitList(emptyList())
     }
 
@@ -496,39 +505,24 @@ class AppPanel(
         }
         // Park button: only for visible windows (background ones are parked already).
         if (isCurrent) {
-            layout.addView(TextView(context).apply {
-                text = "▽"
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
-                setPadding(dp(12), dp(4), dp(4), dp(4))
-                setOnClickListener {
-                    Log.i(TAG, "panel: window parked window=${app.windowId}")
-                    onWindowParked(app.windowId)
-                    refreshWindowSections()
-                }
+            layout.addView(actionButton("▽") {
+                Log.i(TAG, "panel: window parked window=${app.windowId}")
+                onWindowParked(app.windowId)
+                refreshWindowSections()
             })
         }
         // Maximize/restore button: same glyphs as the title bar
         // (TitleBar.setMaximized: maximized -> 🗗, windowed -> ⛶).
-        layout.addView(TextView(context).apply {
-            text = if (app.isMaximized) "🗗" else "⛶"
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
-            setPadding(dp(12), dp(4), dp(4), dp(4))
-            setOnClickListener {
-                Log.i(TAG, "panel: window maximized window=${app.windowId}")
-                onWindowMaximized(app.windowId)
-                refreshWindowSections()
-            }
+        layout.addView(actionButton(if (app.isMaximized) "🗗" else "⛶") {
+            Log.i(TAG, "panel: window maximized window=${app.windowId}")
+            onWindowMaximized(app.windowId)
+            refreshWindowSections()
         })
         // ✕ button for close.
-        layout.addView(TextView(context).apply {
-            text = "✕"
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
-            setPadding(dp(12), dp(4), dp(4), dp(4))
-            setOnClickListener {
-                Log.i(TAG, "panel: window closed window=${app.windowId}")
-                onWindowClosed(app.windowId)
-                refreshWindowSections()
-            }
+        layout.addView(actionButton("✕") {
+            Log.i(TAG, "panel: window closed window=${app.windowId}")
+            onWindowClosed(app.windowId)
+            refreshWindowSections()
         })
         layout.setOnClickListener {
             Log.i(TAG, "panel: window selected window=${app.windowId}")
@@ -537,6 +531,22 @@ class AppPanel(
         }
         return layout
     }
+
+    /**
+     * Window-row action button: the glyph alone is ~18dp wide, so give
+     * every button a 48dp minimum touch target (centered glyph) instead
+     * of the old text-only padding, which was easy to miss.
+     */
+    private fun actionButton(text: String, onClick: () -> Unit): TextView =
+        TextView(context).apply {
+            this.text = text
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
+            gravity = Gravity.CENTER
+            minimumWidth = dp(48)
+            minimumHeight = dp(48)
+            setPadding(dp(4), dp(4), dp(4), dp(4))
+            setOnClickListener { onClick() }
+        }
 
     private fun dp(value: Int): Int =
         (value * context.resources.displayMetrics.density).toInt()

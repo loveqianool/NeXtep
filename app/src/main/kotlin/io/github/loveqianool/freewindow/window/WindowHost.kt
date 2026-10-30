@@ -28,6 +28,9 @@ interface WindowHost {
     /** Current window rect, for the resize handler. */
     fun currentRect(id: Int): android.graphics.Rect
 
+    /** Usable display area (minus system bars / cutout), for resize preview. */
+    fun usableRect(id: Int): android.graphics.Rect
+
     /** Title bar visibility changed; content size changed, resize the VD. */
     fun onContentSizeChanged(id: Int)
 }
