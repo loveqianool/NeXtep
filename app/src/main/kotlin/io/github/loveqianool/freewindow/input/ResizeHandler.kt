@@ -164,6 +164,10 @@ class ResizeHandler(
                 dp(HANDLE_DP),
                 Gravity.BOTTOM or Gravity.END,
             )
+            // Clickable so TalkBack can focus it; the touch listener
+            // still consumes the gesture first, so touch behaviour is unchanged.
+            isClickable = true
+            contentDescription = "缩放窗口"
             addView(indicator)
             setOnTouchListener(touchListener)
         }

@@ -201,7 +201,11 @@ class AppPanel(
             // The search box is the first focusable view; without this,
             // the keyboard can pop up on its own when the panel opens and
             // cover half the list. Only show it when the user taps search.
-            setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_HIDDEN)
+            // ADJUST_RESIZE keeps the list above the keyboard once it does.
+            setSoftInputMode(
+                WindowManager.LayoutParams.SOFT_INPUT_STATE_HIDDEN or
+                    WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE,
+            )
         }
 
         this.dialog = dialog
@@ -530,7 +534,7 @@ class AppPanel(
         }
         // Park button: only for visible windows (background ones are parked already).
         if (isCurrent) {
-            layout.addView(actionButton("▽") {
+            layout.addView(actionButton("▽", "最小化到后台") {
                 Log.i(TAG, "panel: window parked window=${app.windowId}")
                 onWindowParked(app.windowId)
                 refreshWindowSections()
@@ -538,13 +542,13 @@ class AppPanel(
         }
         // Maximize/restore button: same glyphs as the title bar
         // (TitleBar.setMaximized: maximized -> 🗗, windowed -> ⛶).
-        layout.addView(actionButton(if (app.isMaximized) "🗗" else "⛶") {
+        layout.addView(actionButton(if (app.isMaximized) "🗗" else "⛶", if (app.isMaximized) "恢复窗口大小" else "最大化") {
             Log.i(TAG, "panel: window maximized window=${app.windowId}")
             onWindowMaximized(app.windowId)
             refreshWindowSections()
         })
         // ✕ button for close.
-        layout.addView(actionButton("✕") {
+        layout.addView(actionButton("✕", "关闭窗口") {
             Log.i(TAG, "panel: window closed window=${app.windowId}")
             onWindowClosed(app.windowId)
             refreshWindowSections()
@@ -562,9 +566,10 @@ class AppPanel(
      * every button a 48dp minimum touch target (centered glyph) instead
      * of the old text-only padding, which was easy to miss.
      */
-    private fun actionButton(text: String, onClick: () -> Unit): TextView =
+    private fun actionButton(text: String, description: String, onClick: () -> Unit): TextView =
         TextView(context).apply {
             this.text = text
+            contentDescription = description
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
             gravity = Gravity.CENTER
             minimumWidth = dp(48)

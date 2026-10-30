@@ -183,6 +183,7 @@ class FreeWindowView @JvmOverloads constructor(
         val toggleSize = (48 * density).toInt()
         val toggleView = View(context).apply {
             isClickable = true
+            contentDescription = "切换标题栏显示"
             setOnClickListener { toggleTitleBar() }
         }
         addView(

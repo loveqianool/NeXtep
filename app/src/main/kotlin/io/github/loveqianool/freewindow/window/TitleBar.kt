@@ -22,10 +22,10 @@ class TitleBar @JvmOverloads constructor(
     attrs: android.util.AttributeSet? = null,
 ) : LinearLayout(context, attrs) {
 
-    private val parkBtn = makeButton("▽")
-    private val maxBtn = makeButton("⛶")
-    private val muteBtn = makeButton("🔊")
-    private val closeBtn = makeButton("✕")
+    private val parkBtn = makeButton("▽", "最小化到后台")
+    private val maxBtn = makeButton("⛶", "最大化")
+    private val muteBtn = makeButton("🔊", "静音")
+    private val closeBtn = makeButton("✕", "关闭窗口")
 
     private var lastRawX = 0f
     private var lastRawY = 0f
@@ -115,16 +115,19 @@ class TitleBar @JvmOverloads constructor(
 
     fun setMuted(muted: Boolean) {
         muteBtn.text = if (muted) "🔇" else "🔊"
+        muteBtn.contentDescription = if (muted) "取消静音" else "静音"
     }
 
     fun setMaximized(maximized: Boolean) {
         maxBtn.text = if (maximized) "🗗" else "⛶"
+        maxBtn.contentDescription = if (maximized) "恢复窗口大小" else "最大化"
     }
 
-    private fun makeButton(text: String): TextView {
+    private fun makeButton(text: String, description: String): TextView {
         val size = (FreeWindowView.TITLE_BAR_DP * resources.displayMetrics.density).toInt()
         return TextView(context).apply {
             this.text = text
+            contentDescription = description
             textSize = 16f
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
