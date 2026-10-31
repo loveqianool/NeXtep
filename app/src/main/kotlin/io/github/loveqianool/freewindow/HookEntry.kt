@@ -22,7 +22,40 @@ class HookEntry : XposedModule() {
         }
         if (param.packageName == "com.android.launcher3") {
             Log.i(TAG, "launcher loaded")
-            RecentsHook.install(this, param.classLoader)
+            val classLoader = packageClassLoader(param)
+            if (classLoader != null) {
+                RecentsHook.install(this, classLoader)
+            } else {
+                Log.w(TAG, "launcher: no package classloader, menu hook skipped")
+            }
+        }
+    }
+
+    /**
+     * The package classloader accessor differs across libxposed versions:
+     * on the pinned api:102.0.0, `param.classLoader` does not compile for
+     * PackageLoadedParam (CI: Unresolved reference 'classLoader'), while
+     * SystemServerStartingParam still has it. Resolve it reflectively
+     * instead of hard-coding a method name that may not exist in this
+     * version: prefer getClassLoader, fall back to getDefaultClassLoader,
+     * then to any no-arg method returning a ClassLoader. If none resolves,
+     * the launcher hook is skipped (menu item missing) but nothing else
+     * breaks — never crash the launcher process over a loader lookup.
+     */
+    private fun packageClassLoader(param: PackageLoadedParam): ClassLoader? {
+        return try {
+            val methods = param.javaClass.methods
+            val preferred = methods.firstOrNull { it.name == "getClassLoader" }
+                ?: methods.firstOrNull { it.name == "getDefaultClassLoader" }
+                ?: methods.firstOrNull {
+                    it.returnType == ClassLoader::class.java && it.parameterTypes.isEmpty()
+                }
+                ?: return null
+            preferred.isAccessible = true
+            preferred.invoke(param) as? ClassLoader
+        } catch (e: Throwable) {
+            Log.w(TAG, "launcher: package classloader lookup failed", e)
+            null
         }
     }
 
