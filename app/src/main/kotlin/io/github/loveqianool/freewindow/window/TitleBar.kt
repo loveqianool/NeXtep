@@ -2,7 +2,6 @@ package io.github.loveqianool.freewindow.window
 
 import android.content.Context
 import android.graphics.Color
-import android.util.Log
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
@@ -220,7 +219,6 @@ class TitleBar @JvmOverloads constructor(
     }
 
     companion object {
-        private const val TAG = "FreeWindow"
         private const val MENU_COLLAPSE = 1
         private const val MENU_FIT = 2
         private const val MENU_CROP = 3

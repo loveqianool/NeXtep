@@ -8,7 +8,6 @@ import android.content.pm.ActivityInfo
 import android.content.Intent
 import android.graphics.PixelFormat
 import android.graphics.Rect
-import android.hardware.display.VirtualDisplay
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -59,7 +58,10 @@ object WindowManager : WindowHost {
     /** All windows by id. */
     private val windows: MutableMap<Int, WindowRecord> = ConcurrentHashMap()
 
-    private val displays = ConcurrentHashMap<Int, VirtualDisplay>()
+    // No second display map here: DisplayEngine already tracks the
+    // VirtualDisplay per id (create stores it, release removes it), so
+    // readers go through displayEngine.get(id) instead of a duplicate map
+    // that could drift from it.
     private val surfaces = ConcurrentHashMap<Int, Surface>()
     private val savedRects = mutableMapOf<Int, Rect>()
     /** Labels rarely change; avoid a PackageManager lookup per window per update. */
@@ -198,7 +200,6 @@ object WindowManager : WindowHost {
         runCatching { wm?.removeView(rec.view) }
         rec.view.releaseSurfaceTexture()
         surfaces.remove(id)?.let { runCatching { it.release() } }
-        displays.remove(id)
         displayEngine?.release(id)
         updateNotification()
         Log.i(TAG, "closeWindow id=$id")
@@ -578,8 +579,7 @@ object WindowManager : WindowHost {
             rec.view.requestLayout()
         }
         // Resize the VirtualDisplay in place (no rebuild, no task move).
-        // This is how the main branch does it.
-        val vd = displays[id]
+        val vd = displayEngine?.get(id)
         if (vd != null) {
             val app = appContext
             val dpi = if (app != null) densityDpi(app) else 440
@@ -618,7 +618,7 @@ object WindowManager : WindowHost {
         handler.post {
             pendingContentResize.remove(id)
             val content = rec.view.contentSize()
-            val vd = displays[id] ?: return@post
+            val vd = displayEngine?.get(id) ?: return@post
             runCatching {
                 vd.resize(content.width(), content.height(), densityDpi(app))
                 Log.i(TAG, "onContentSizeChanged id=$id vd=${content.width()}x${content.height()}")
@@ -655,7 +655,6 @@ object WindowManager : WindowHost {
             return
         }
         val displayId = vd.display.displayId
-        displays[id] = vd
         rec.view.displayId = displayId
         windows[id] = rec.copy(displayId = displayId)
         launchOnDisplay(app, rec.componentName, displayId)
@@ -678,7 +677,7 @@ object WindowManager : WindowHost {
         val app = appContext ?: return
         // Keep the old display alive while moving the task; releasing it first
         // kills the task (Unknown rootTaskId).
-        val oldVd = displays[id]
+        val oldVd = displayEngine?.get(id)
         val oldTaskId = rec.taskId
         // If the size changed (resize/maximize), the moved task won't re-layout;
         // relaunch instead. Only move when the size is the same (surface recreate).
@@ -711,7 +710,6 @@ object WindowManager : WindowHost {
             return
         }
         val newDisplayId = vd.display.displayId
-        displays[id] = vd
         rec.view.displayId = newDisplayId
         windows[id] = rec.copy(displayId = newDisplayId)
         var moved = false
@@ -795,7 +793,7 @@ object WindowManager : WindowHost {
         // the VD to the icon size (expandCollapsed clears the flag first,
         // so a correct call never reaches here collapsed).
         if (rec.isCollapsed) return
-        displays[id]?.let { vd ->
+        displayEngine?.get(id)?.let { vd ->
             val (vdW, vdH) = vdSizeForWindow(clamped, rec.view)
             runCatching { vd.resize(vdW, vdH, densityDpi(app)) }
                 .onFailure { Log.i(TAG, "resize failed id=$id: ${it.message}") }

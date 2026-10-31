@@ -130,16 +130,6 @@ object FreeWindowNotification {
         Log.i(TAG, "notification updated: ${parkedApps.size} parked")
     }
 
-    /** Remove the notification and unregister the receiver. */
-    fun hide(context: Context) {
-        if (receiverRegistered) {
-            runCatching { context.unregisterReceiver(receiver) }
-            receiverRegistered = false
-        }
-        context.getSystemService(NotificationManager::class.java).cancel(NOTIFICATION_ID)
-        Log.i(TAG, "notification hidden")
-    }
-
     private fun buildNotification(context: Context, parkedApps: List<ParkedApp>): Notification {
         val style = Notification.InboxStyle().apply {
             setBigContentTitle("FreeWindow")

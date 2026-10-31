@@ -25,8 +25,8 @@ import android.view.WindowManager
  *   again by the host to the same area.
  * - On release the new rect is committed through [Callback.onResizeCommit];
  *   the host then resizes the VirtualDisplay and re-lays out the content.
- * - A plain tap (no drag) on the area is reported via
- *   [Callback.onResizeAreaTap] so the host can run its own gesture.
+ *   A plain tap (no drag) does nothing: the top-left tap below toggles
+ *   the title bar on its own, in both modes.
  */
 class ResizeHandler(
     private val context: Context,
@@ -41,8 +41,6 @@ class ResizeHandler(
         fun usableRect(): Rect
         /** Drag finished: commit the resize for real. */
         fun onResizeCommit(rect: Rect)
-        /** Tap without drag on the resize area. */
-        fun onResizeAreaTap()
     }
 
     companion object {
@@ -125,9 +123,7 @@ class ResizeHandler(
             }
             MotionEvent.ACTION_UP -> {
                 hidePreview()
-                if (!moved) {
-                    callback.onResizeAreaTap()
-                } else {
+                if (moved) {
                     // Host's clampRect returns a new Rect and never mutates
                     // its input, but copy once here so the reused previewRect
                     // can never leak into the host's state.

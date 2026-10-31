@@ -70,8 +70,6 @@ class FreeWindowView @JvmOverloads constructor(
     private val inverseCropMatrix = Matrix()
     private var hasCropTransform = false
 
-    /** True while collapsed to the icon: only the icon view is visible. */
-    private var collapsed = false
     private var iconLastRawX = 0f
     private var iconLastRawY = 0f
     private var iconDragging = false
@@ -134,9 +132,6 @@ class FreeWindowView @JvmOverloads constructor(
             override fun usableRect(): android.graphics.Rect = host.usableRect(windowId)
             override fun onResizeCommit(rect: android.graphics.Rect) =
                 host.onResizeCommit(windowId, rect)
-            // Tap on the resize area no longer arms anything: the top-left
-            // tap below toggles the title bar on its own, in both modes.
-            override fun onResizeAreaTap() = Unit
         },
     )
 
@@ -501,8 +496,6 @@ class FreeWindowView @JvmOverloads constructor(
         host.onContentSizeChanged(windowId)
     }
 
-    fun isCollapsed(): Boolean = collapsed
-
     /**
      * Collapse to just the icon, or restore the full window.
      *
@@ -514,7 +507,6 @@ class FreeWindowView @JvmOverloads constructor(
      * always returns to a windowed window (title bar visible, handle on).
      */
     fun setCollapsed(collapsed: Boolean) {
-        this.collapsed = collapsed
         // Collapsing hides the content; a selection in progress would be
         // left dangling, so cancel the mode (the applied crop, if any, stays).
         if (collapsed) cancelCropMode()

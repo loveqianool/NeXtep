@@ -64,6 +64,9 @@ class DisplayEngine(private val context: Context) {
         }
     }
 
+    /** The display backing [id], if one was created and not yet released. */
+    fun get(id: Int): VirtualDisplay? = displays[id]
+
     fun release(id: Int) {
         displays.remove(id)?.let { vd ->
             try {

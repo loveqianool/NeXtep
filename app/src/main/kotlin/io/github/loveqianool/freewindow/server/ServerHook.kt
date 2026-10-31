@@ -7,9 +7,12 @@ import io.github.libxposed.api.XposedModule
 import io.github.loveqianool.freewindow.window.WindowMute
 
 /**
- * system_server hooks. Currently only the display-capability matching:
- * FreeWindow-* virtual displays inherit color mode / touchscreen / keyboard /
- * navigation from the physical display so apps render correctly.
+ * system_server hooks:
+ * - Display-capability matching: FreeWindow-* virtual displays inherit
+ *   color mode / touchscreen / keyboard / navigation from the physical
+ *   display so apps render correctly.
+ * - LOCAL IME policy for FreeWindow-* displays (see installDisplayHook).
+ * - Mute receiver: AppOps OP_PLAY_AUDIO per package (see installMuteReceiver).
  */
 object ServerHook {
     private const val TAG = "FreeWindow"
