@@ -77,6 +77,12 @@ class FreeWindowView @JvmOverloads constructor(
     private var iconDragging = false
     private val iconTouchSlop = ViewConfiguration.get(context).scaledTouchSlop
 
+    /** Toggle-zone drag state, same pattern as the collapse icon. */
+    private var toggleLastRawX = 0f
+    private var toggleLastRawY = 0f
+    private var toggleDragging = false
+    private val toggleTouchSlop = ViewConfiguration.get(context).scaledTouchSlop
+
     /** Ensures touch events are forwarded in order (DOWN before MOVE/UP). */
     private var lastForwardAt = 0L
     private val touchHandler = android.os.Handler(android.os.Looper.getMainLooper())
@@ -287,11 +293,62 @@ class FreeWindowView @JvmOverloads constructor(
         // covers title-bar space; maximized: it already swallowed taps
         // there), so a single tap costs no extra accidental-tap risk
         // versus the old double-tap / two-tap gestures.
+        //
+        // It must also drag: this view sits on top of the title bar, so
+        // TitleBar's drag intercept never sees touches that start here,
+        // and a plain clickable view swallows the whole gesture — that
+        // is why dragging from the top-left corner did nothing. The
+        // touch listener below mirrors the collapse icon: a tap toggles
+        // the bar, a drag moves the window (same integer-advance rule
+        // as TitleBar, so slow drags still move).
+        // Capture the id first: inside View.apply, unqualified windowId
+        // resolves to View.getWindowId(), not this class's Int property
+        // (the same shadowing that broke the collapse icon in CI).
+        val toggleId = windowId
         val toggleSize = (48 * density).toInt()
         val toggleView = View(context).apply {
             isClickable = true
             contentDescription = "切换标题栏显示"
+            // Kept for accessibility: a touch tap is handled by the touch
+            // listener (which consumes the stream, so this never fires
+            // twice for a touch), while TalkBack's performClick still
+            // reaches here.
             setOnClickListener { toggleTitleBar() }
+            setOnTouchListener { _, event ->
+                when (event.actionMasked) {
+                    MotionEvent.ACTION_DOWN -> {
+                        toggleLastRawX = event.rawX
+                        toggleLastRawY = event.rawY
+                        toggleDragging = false
+                        true
+                    }
+                    MotionEvent.ACTION_MOVE -> {
+                        val dx = event.rawX - toggleLastRawX
+                        val dy = event.rawY - toggleLastRawY
+                        if (!toggleDragging && hypot(dx, dy) > toggleTouchSlop) {
+                            toggleDragging = true
+                        }
+                        if (toggleDragging) {
+                            val idx = dx.toInt()
+                            val idy = dy.toInt()
+                            host.onMove(toggleId, idx, idy)
+                            toggleLastRawX += idx
+                            toggleLastRawY += idy
+                        }
+                        true
+                    }
+                    MotionEvent.ACTION_UP -> {
+                        if (!toggleDragging) toggleTitleBar()
+                        toggleDragging = false
+                        true
+                    }
+                    MotionEvent.ACTION_CANCEL -> {
+                        toggleDragging = false
+                        true
+                    }
+                    else -> true
+                }
+            }
         }
         addView(
             toggleView,
