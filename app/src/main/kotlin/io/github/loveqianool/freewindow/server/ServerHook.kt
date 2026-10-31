@@ -70,6 +70,14 @@ object ServerHook {
                         val ctx = getField(chain.thisObject!!, "mContext") as? android.content.Context
                         if (ctx != null) {
                             installMuteReceiverOnce(ctx)
+                            // Recents cards for FreeWindow windows (fake
+                            // recent tasks, see RecentsTaskHook). Best
+                            // effort: a failure here only loses the cards.
+                            try {
+                                RecentsTaskHook.install(module, cl, ctx)
+                            } catch (e: Throwable) {
+                                Log.w(TAG, "install RecentsTaskHook failed", e)
+                            }
                         } else {
                             Log.w(TAG, "systemReady: mContext null")
                         }
