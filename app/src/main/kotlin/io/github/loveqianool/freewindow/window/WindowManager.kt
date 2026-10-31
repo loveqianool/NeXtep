@@ -20,6 +20,7 @@ import android.widget.Toast
 import io.github.loveqianool.freewindow.input.ImeHelper
 import io.github.loveqianool.freewindow.notification.AppPanel
 import io.github.loveqianool.freewindow.notification.FreeWindowNotification
+import io.github.loveqianool.freewindow.notification.RecentsBridge
 import io.github.loveqianool.freewindow.server.DisplayEngine
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
@@ -70,6 +71,8 @@ object WindowManager : WindowHost {
     private val aspectCache = ConcurrentHashMap<ComponentName, AspectInfo>()
     /** Last background list actually notified; identical lists skip rebuild. */
     private var lastNotifiedBackground: List<FreeWindowNotification.ParkedApp>? = null
+    /** Last full window list actually broadcast to Recents; same dedup idea. */
+    private var lastRecentsWindows: List<FreeWindowNotification.ParkedApp>? = null
     /** True while exit() is closing windows one by one. */
     private var suppressNotification = false
     /** Window ids with a content-size VD resize already queued. */
@@ -180,6 +183,10 @@ object WindowManager : WindowHost {
             isMaximized = false,
             isMuted = inherited,
         )
+        // A new window is neither parked nor maximized, so the notification
+        // background list is unchanged and updateNotification() would skip
+        // it — but Recents needs the new card, so broadcast explicitly.
+        notifyRecents()
         Log.i(TAG, "openApp id=$id component=$componentName rect=$rect")
         return id
     }
@@ -1120,7 +1127,24 @@ object WindowManager : WindowHost {
         }
     }
 
+    /**
+     * Broadcast the full window list to Recents (see RecentsBridge). Called
+     * from updateNotification() so every window-state change that already
+     * refreshes the notification also refreshes Recents, plus from openApp()
+     * (see there). Runs before the suppress/dedup checks below: during
+     * exit(), windows close one by one, and Recents should lose their cards
+     * as they close, not only at the final forced update.
+     */
+    private fun notifyRecents() {
+        val app = appContext ?: return
+        val list = getPanelWindows()
+        if (list == lastRecentsWindows) return
+        lastRecentsWindows = list
+        RecentsBridge.broadcastWindows(app, list)
+    }
+
     private fun updateNotification(force: Boolean = false) {
+        notifyRecents()
         if (suppressNotification && !force) return
         val app = appContext ?: return
         val background = getBackgroundApps()

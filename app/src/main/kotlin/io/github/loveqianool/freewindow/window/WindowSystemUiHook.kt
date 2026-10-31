@@ -1,10 +1,13 @@
 package io.github.loveqianool.freewindow.window
 
 import android.app.Application
+import android.content.ComponentName
+import android.content.Context
 import android.util.Log
 import android.widget.Toast
 import io.github.loveqianool.freewindow.notification.AppPanel
 import io.github.loveqianool.freewindow.notification.FreeWindowNotification
+import io.github.loveqianool.freewindow.notification.RecentsBridge
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -36,6 +39,51 @@ object WindowSystemUiHook {
                 return@Thread
             }
             WindowManager.init(app)
+            // Shared by the panel's app-list tap and the Recents menu's
+            // "FreeWindow" item: already open -> restore that window,
+            // otherwise open a new one (or complain about the limit/failure).
+            val openOrRestore: (Context, ComponentName) -> Unit = { ctx, component ->
+                val existing = WindowManager.findWindowId(component)
+                if (existing != null) {
+                    // restoreWindow (not a bare unpark) so a collapsed
+                    // window expands instead of just showing its icon again.
+                    WindowManager.restoreWindow(existing)
+                } else if (WindowManager.isAtLimit()) {
+                    Toast.makeText(
+                        ctx,
+                        "FreeWindow：已达 ${WindowManager.MAX_WINDOWS} 个窗口上限，先关掉一个再开",
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                } else if (WindowManager.openApp(ctx, component) < 0) {
+                    Toast.makeText(
+                        ctx,
+                        "FreeWindow：打开窗口失败",
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                }
+            }
+            RecentsBridge.listener = object : RecentsBridge.Listener {
+                override fun onWindowTask(packageName: String, className: String, taskId: Int) {
+                    // taskId is the Recents task on the main display; v1
+                    // windows by relaunching on the VD (same as panel open).
+                    // A true task-move would use it; that is a later step.
+                    openOrRestore(app, ComponentName(packageName, className))
+                }
+
+                override fun onRestoreWindow(windowId: Int) =
+                    WindowManager.restoreWindow(windowId)
+
+                override fun onCloseWindow(windowId: Int) =
+                    WindowManager.closeWindow(windowId)
+
+                override fun onRequestWindows() {
+                    // Bypass WindowManager.notifyRecents()'s dedup: a
+                    // launcher that just started has an empty cache, so it
+                    // needs the current list even if nothing changed.
+                    RecentsBridge.broadcastWindows(app, WindowManager.getPanelWindows())
+                }
+            }
+            RecentsBridge.register(app)
             FreeWindowNotification.listener = object : FreeWindowNotification.Listener {
                 override fun onShowPanel() {
                     Log.i(TAG, "show panel requested")
@@ -54,27 +102,7 @@ object WindowSystemUiHook {
                             ctx,
                             getWindows = { WindowManager.getPanelWindows() },
                             onAppSelected = { component ->
-                                // Already open: go to that window instead of
-                                // opening a duplicate.
-                                val existing = WindowManager.findWindowId(component)
-                                if (existing != null) {
-                                    // restoreWindow (not a bare unpark) so a
-                                    // collapsed window expands instead of
-                                    // just showing its icon again.
-                                    WindowManager.restoreWindow(existing)
-                                } else if (WindowManager.isAtLimit()) {
-                                    Toast.makeText(
-                                        ctx,
-                                        "FreeWindow：已达 ${WindowManager.MAX_WINDOWS} 个窗口上限，先关掉一个再开",
-                                        Toast.LENGTH_SHORT,
-                                    ).show()
-                                } else if (WindowManager.openApp(ctx, component) < 0) {
-                                    Toast.makeText(
-                                        ctx,
-                                        "FreeWindow：打开窗口失败",
-                                        Toast.LENGTH_SHORT,
-                                    ).show()
-                                }
+                                openOrRestore(ctx, component)
                             },
                             onWindowSelected = { windowId ->
                                 WindowManager.restoreWindow(windowId)
