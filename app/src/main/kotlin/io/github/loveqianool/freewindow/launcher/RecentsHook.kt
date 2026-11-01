@@ -230,7 +230,9 @@ object RecentsHook {
     private fun findOptionLayoutById(menuView: Any): ViewGroup? {
         val view = menuView as? View ?: return null
         val id = getRInt("com.android.launcher3.R\$id", "menu_option_layout") ?: return null
-        return view.findViewById<ViewGroup>(id)
+        // Same safe-cast rule as the icon above: a hard ViewGroup cast
+        // would throw if this id ever points at a plain View.
+        return view.findViewById<View>(id) as? ViewGroup
     }
 
     /**
@@ -247,9 +249,14 @@ object RecentsHook {
             if (inflated != null) {
                 val iconId = getRInt("com.android.launcher3.R\$id", "icon")
                 val textId = getRInt("com.android.launcher3.R\$id", "text")
-                (if (iconId != null) inflated.findViewById<ImageView>(iconId) else null)
+                // v17 QuickStep: the "icon" view in task_view_menu_option
+                // is a plain View, not an ImageView — a hard cast throws
+                // ClassCastException and kills the whole append (device
+                // probe, 2026-11-01). Safe-cast so a non-ImageView icon
+                // is simply left alone; text is what the user reads.
+                (if (iconId != null) inflated.findViewById<View>(iconId) as? ImageView else null)
                     ?.setImageResource(android.R.drawable.ic_dialog_info)
-                val textView = if (textId != null) inflated.findViewById<TextView>(textId) else null
+                val textView = if (textId != null) inflated.findViewById<View>(textId) as? TextView else null
                 textView?.text = "自由窗口"
                 // Text is the part the user reads: without it the row
                 // would be an icon with no label, so fall through to the
