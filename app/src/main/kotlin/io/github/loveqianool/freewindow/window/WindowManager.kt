@@ -927,10 +927,13 @@ object WindowManager : WindowHost {
         return AndroidWindowManager.LayoutParams(
             rect.width(),
             rect.height(),
-            // TYPE_PHONE (2002) sits below TYPE_INPUT_METHOD (2011); the IME
-            // stays visible above a maximized window. OVERLAY (2038) would
-            // cover it.
-            AndroidWindowManager.LayoutParams.TYPE_PHONE,
+            // TYPE_SEARCH_BAR (2001) is one level below TYPE_PHONE (2002):
+            // still a system window above apps, but a level lower than
+            // before. On this device PHONE was observed above the keyboard
+            // despite sitting below TYPE_INPUT_METHOD (2011) in theory, so
+            // lower it one level so the IME stays visible and tappable
+            // above a free window. OVERLAY (2038) would cover it.
+            AndroidWindowManager.LayoutParams.TYPE_SEARCH_BAR,
             ImeHelper.DEFAULT_FLAGS,
             PixelFormat.TRANSLUCENT,
         ).apply {

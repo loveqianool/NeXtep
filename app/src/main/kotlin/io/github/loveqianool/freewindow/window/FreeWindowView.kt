@@ -126,7 +126,10 @@ class FreeWindowView @JvmOverloads constructor(
     private val resizeHandler = ResizeHandler(
         context,
         context.getSystemService(Context.WINDOW_SERVICE) as android.view.WindowManager,
-        android.view.WindowManager.LayoutParams.TYPE_PHONE,
+        // Same level as the main window (see WindowManager.windowParams):
+        // the resize preview stays in the same layer as the window itself,
+        // added later so it still draws above it during a drag.
+        android.view.WindowManager.LayoutParams.TYPE_SEARCH_BAR,
         object : ResizeHandler.Callback {
             override fun currentRect(): android.graphics.Rect = host.currentRect(windowId)
             override fun usableRect(): android.graphics.Rect = host.usableRect(windowId)
