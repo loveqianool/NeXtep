@@ -118,6 +118,114 @@ object RecentsHook {
         // icon / thumbnail with empty state. Probe the tile-state
         // classes and log what state a fake card actually receives.
         installProbe7(module, classLoader)
+        // TEMPORARY PROBE8 (remove with PROBE3, 2026-11-01): PROBE7
+        // showed fake cards DO receive a TaskTileUiState (same field
+        // types as real cards), so the callback is not missing — the
+        // state's CONTENT must be empty. PROBE7 only logged field
+        // types, not values, so it cannot tell an empty tasks list
+        // from a full one. Log the values: hasHeader / isCentralTask,
+        // tasks list size, and each tile element's title / icon /
+        // thumbnail presence, plus the TaskView's own Task title at
+        // that moment, to see whether the fake Task's title survived
+        // or was cleared before the tile state was built.
+        installProbe8(module, classLoader)
+    }
+
+    /**
+     * TEMPORARY PROBE8, launcher side. Logging-only, same rules as
+     * PROBE7: hook TaskView.updateTaskViewState, proceed, then log
+     * the tile state's values (not just its field types). Bitmaps
+     * are never logged by content, only by presence and size.
+     */
+    private fun installProbe8(module: XposedModule, cl: ClassLoader) {
+        try {
+            val taskViewClass = cl.loadClass("com.android.quickstep.views.TaskView")
+            for (method in taskViewClass.declaredMethods) {
+                if (!method.name.startsWith("updateTaskViewState")) continue
+                method.isAccessible = true
+                module.hook(method).intercept(object : XposedInterface.Hooker {
+                    override fun intercept(chain: XposedInterface.Chain): Any? {
+                        val result = chain.proceed()
+                        try {
+                            val state = chain.args.getOrNull(0) ?: return result
+                            val taskView = chain.thisObject
+                            val firstTask = runCatching {
+                                val m = taskView?.javaClass?.methods?.firstOrNull {
+                                    it.name == "getFirstTask" && it.parameterTypes.isEmpty()
+                                }
+                                m?.isAccessible = true
+                                m?.invoke(taskView)
+                            }.getOrNull()
+                            val taskId = runCatching {
+                                val key = getField(firstTask, "key")
+                                getField(key, "id") as? Int
+                            }.getOrNull()
+                            val isFake = taskId != null && taskId >= CARD_FAKE_BASE
+                            // Only fake cards and one real card per
+                            // Recents open are worth logging in full;
+                            // real cards otherwise spam the log.
+                            if (!isFake && taskId != null && taskId % 10 != 0) return result
+                            val taskTitle = runCatching {
+                                getField(firstTask, "title") as? String
+                            }.getOrNull()
+                            val taskIconNull = runCatching {
+                                getField(firstTask, "icon") == null
+                            }.getOrNull()
+                            val sb = StringBuilder()
+                            for (field in state.javaClass.declaredFields) {
+                                try {
+                                    field.isAccessible = true
+                                    val v = field.get(state)
+                                    when {
+                                        v == null -> sb.append("${field.name}=null;")
+                                        v is Boolean -> sb.append("${field.name}=$v;")
+                                        v is Int -> sb.append("${field.name}=$v;")
+                                        v is List<*> -> {
+                                            sb.append("${field.name}=List size=${v.size};")
+                                            for ((i, elem) in v.withIndex()) {
+                                                if (elem == null) {
+                                                    sb.append("  [$i]=null;")
+                                                    continue
+                                                }
+                                                sb.append("  [$i]${elem.javaClass.simpleName}:")
+                                                for (ef in elem.javaClass.declaredFields) {
+                                                    try {
+                                                        ef.isAccessible = true
+                                                        val ev = ef.get(elem)
+                                                        sb.append(when {
+                                                            ev == null -> "${ef.name}=null,"
+                                                            ev is String -> "${ef.name}='${ev.take(40)}',"
+                                                            ev is Int -> "${ef.name}=$ev,"
+                                                            ev is Boolean -> "${ef.name}=$ev,"
+                                                            ev is android.graphics.Bitmap -> "${ef.name}=Bitmap ${ev.width}x${ev.height},"
+                                                            else -> "${ef.name}=${ev.javaClass.simpleName},"
+                                                        })
+                                                    } catch (_: Throwable) {
+                                                    }
+                                                }
+                                                sb.append(";")
+                                            }
+                                        }
+                                        else -> sb.append("${field.name}=${v.javaClass.simpleName};")
+                                    }
+                                } catch (_: Throwable) {
+                                }
+                            }
+                            Log.i(
+                                TAG,
+                                "launcher: PROBE8 updateTaskViewState taskId=$taskId isFake=$isFake " +
+                                    "taskTitle='${taskTitle?.take(40)}' taskIconNull=$taskIconNull state=[$sb]",
+                            )
+                        } catch (_: Throwable) {
+                        }
+                        return result
+                    }
+                })
+            }
+            Log.i(TAG, "launcher: PROBE8 hook installed on TaskView.updateTaskViewState")
+        } catch (e: Throwable) {
+            Log.w(TAG, "launcher: PROBE8 install failed", e)
+        }
     }
 
     /**
