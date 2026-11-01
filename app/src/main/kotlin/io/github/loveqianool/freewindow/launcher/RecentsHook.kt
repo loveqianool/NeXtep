@@ -65,6 +65,120 @@ object RecentsHook {
         }
         // The real menu builder on v17 QuickStep (see class KDoc).
         hookAddMenuOption(module, classLoader, "com.android.quickstep.views.TaskMenuView")
+        // TEMPORARY PROBE3 (remove after card diagnosis, 2026-11-01):
+        // ATMS.getRecentTasks is hooked and correct but never called, so
+        // the launcher must load its Recents task list another way. Probe
+        // everything the launcher-side injection will need, in one build:
+        // method tables for the task-list classes, plus logging-only hooks
+        // for the task query / click / swipe entry points, so the next
+        // implementation does not need another probe round.
+        installProbe3(module, classLoader)
+    }
+
+    /**
+     * TEMPORARY PROBE3, launcher side. All hooks here are logging-only:
+     * proceed first, log, return the original result unchanged. Any
+     * failure logs and skips just that method; the launcher never
+     * crashes because of this probe.
+     */
+    private fun installProbe3(module: XposedModule, cl: ClassLoader) {
+        try {
+            // 1. Method tables: what task-list classes exist, and what
+            // task methods they actually declare on this build.
+            dumpProbe3Methods(cl, "com.android.quickstep.RecentsModel")
+            dumpProbe3Methods(cl, "com.android.quickstep.views.RecentsView")
+            // 2. Client-side task query / click / swipe entry points.
+            hookProbe3ByName(module, "android.app.ActivityManager") { name ->
+                name == "getRecentTasks" || name == "startActivityFromRecents" || name == "removeTask"
+            }
+            // 3. Data-layer task methods: load / change / remove tasks.
+            hookProbe3Class(module, cl, "com.android.quickstep.RecentsModel") { name ->
+                "Task" in name
+            }
+            // 4. UI-layer task-list methods (plural Tasks, to avoid the
+            // per-card getTaskView spam of the singular form).
+            hookProbe3Class(module, cl, "com.android.quickstep.views.RecentsView") { name ->
+                "Tasks" in name || "LoadPlan" in name
+            }
+            // 5. Card click / dismiss handlers, for later fake-card taps.
+            hookProbe3Class(module, cl, "com.android.quickstep.views.TaskView") { name ->
+                val lower = name.lowercase()
+                "launch" in lower || "dismiss" in lower
+            }
+        } catch (e: Throwable) {
+            Log.w(TAG, "launcher: PROBE3 install failed", e)
+        }
+    }
+
+    private fun dumpProbe3Methods(cl: ClassLoader, className: String) {
+        try {
+            val clazz = cl.loadClass(className)
+            for (method in clazz.declaredMethods) {
+                Log.i(
+                    TAG,
+                    "launcher: PROBE3 dump $className method ${method.name}(" +
+                        method.parameterTypes.joinToString { it.simpleName } + ")",
+                )
+            }
+        } catch (e: Throwable) {
+            Log.w(TAG, "launcher: PROBE3 dump $className NOT FOUND")
+        }
+    }
+
+    private fun hookProbe3ByName(module: XposedModule, className: String, match: (String) -> Boolean) {
+        try {
+            val clazz = Class.forName(className)
+            var matched = 0
+            for (method in clazz.declaredMethods) {
+                if (!match(method.name)) continue
+                matched++
+                hookProbe3Method(module, "PROBE3 $className.${method.name}", method)
+            }
+            if (matched == 0) Log.w(TAG, "launcher: PROBE3 hook $className no matching methods")
+        } catch (e: Throwable) {
+            Log.w(TAG, "launcher: PROBE3 hook $className failed", e)
+        }
+    }
+
+    private fun hookProbe3Class(module: XposedModule, cl: ClassLoader, className: String, match: (String) -> Boolean) {
+        try {
+            val clazz = cl.loadClass(className)
+            var matched = 0
+            for (method in clazz.declaredMethods) {
+                if (!match(method.name)) continue
+                matched++
+                hookProbe3Method(module, "PROBE3 $className.${method.name}", method)
+            }
+            if (matched == 0) Log.w(TAG, "launcher: PROBE3 hook $className no matching methods")
+        } catch (e: Throwable) {
+            Log.w(TAG, "launcher: PROBE3 hook $className failed", e)
+        }
+    }
+
+    private fun hookProbe3Method(module: XposedModule, label: String, method: java.lang.reflect.Method) {
+        try {
+            method.isAccessible = true
+            module.hook(method).intercept(object : XposedInterface.Hooker {
+                override fun intercept(chain: XposedInterface.Chain): Any? {
+                    val result = chain.proceed()
+                    try {
+                        val size = (result as? List<*>)?.size
+                        val firstInt = chain.args.getOrNull(0) as? Int
+                        Log.i(
+                            TAG,
+                            "launcher: $label called args=${chain.args.size} " +
+                                (if (firstInt != null) "firstInt=$firstInt " else "") +
+                                (if (size != null) "resultSize=$size" else "result=${result?.javaClass?.simpleName}"),
+                        )
+                    } catch (_: Throwable) {
+                        // Logging must never change the result.
+                    }
+                    return result
+                }
+            })
+        } catch (e: Throwable) {
+            Log.w(TAG, "launcher: PROBE3 hook $label failed", e)
+        }
     }
 
     /**

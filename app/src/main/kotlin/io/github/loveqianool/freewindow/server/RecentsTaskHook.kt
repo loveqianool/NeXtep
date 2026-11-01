@@ -172,11 +172,35 @@ object RecentsTaskHook {
                         })
                         hooked = true
                     }
+                    // TEMPORARY PROBE3: log every task click, not just
+                    // fake ones, so the real card click path is visible
+                    // for later fake-card handling.
+                    "getTasks" -> {
+                        method.isAccessible = true
+                        module.hook(method).intercept(object : XposedInterface.Hooker {
+                            override fun intercept(chain: XposedInterface.Chain): Any? {
+                                val result = chain.proceed()
+                                try {
+                                    val size = (result as? List<*>)?.size
+                                    Log.i(
+                                        TAG,
+                                        "recents-tasks: PROBE3 getTasks callerUid=${Binder.getCallingUid()} " +
+                                            "args=${chain.args.size} " +
+                                            (if (size != null) "resultSize=$size" else "result=${result?.javaClass?.simpleName}"),
+                                    )
+                                } catch (_: Throwable) {
+                                }
+                                return result
+                            }
+                        })
+                        hooked = true
+                    }
                     "startActivityFromRecents" -> {
                         method.isAccessible = true
                         module.hook(method).intercept(object : XposedInterface.Hooker {
                             override fun intercept(chain: XposedInterface.Chain): Any? {
                                 val taskId = chain.args.getOrNull(0) as? Int
+                                Log.i(TAG, "recents-tasks: PROBE3 startActivityFromRecents taskId=$taskId callerUid=${Binder.getCallingUid()}")
                                 if (taskId != null && isFake(taskId)) {
                                     return try {
                                         sendToSystemUi(chain, RecentsBridge.ACTION_RESTORE_WINDOW, taskId)
@@ -197,6 +221,7 @@ object RecentsTaskHook {
                         module.hook(method).intercept(object : XposedInterface.Hooker {
                             override fun intercept(chain: XposedInterface.Chain): Any? {
                                 val taskId = chain.args.getOrNull(0) as? Int
+                                Log.i(TAG, "recents-tasks: PROBE3 removeTask taskId=$taskId callerUid=${Binder.getCallingUid()}")
                                 if (taskId != null && isFake(taskId)) {
                                     return try {
                                         sendToSystemUi(chain, RecentsBridge.ACTION_CLOSE_WINDOW, taskId)
@@ -222,6 +247,14 @@ object RecentsTaskHook {
                 .joinToString { it.name + "(" + it.parameterTypes.joinToString { p -> p.simpleName } + ")" }
             Log.i(TAG, "recents-tasks: PROBE2 getRecentTasks NOT FOUND, recent-named methods: $recentNames")
         }
+        // TEMPORARY PROBE3 (remove after card diagnosis, 2026-11-01):
+        // always list the Recent-named methods, even when getRecentTasks
+        // was found, so a launcher using a different Recent-* entry
+        // point shows up without another probe round.
+        val recentNamesAll = taskManagerClass.declaredMethods
+            .filter { "Recent" in it.name }
+            .joinToString { it.name + "(" + it.parameterTypes.joinToString { p -> p.simpleName } + ")" }
+        Log.i(TAG, "recents-tasks: PROBE3 recent-named methods: $recentNamesAll")
         Log.i(TAG, "recents-tasks: task manager hooks installed=$hooked")
     }
 
