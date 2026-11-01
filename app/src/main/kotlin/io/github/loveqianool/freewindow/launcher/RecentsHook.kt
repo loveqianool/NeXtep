@@ -4,6 +4,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.graphics.drawable.Drawable
 import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
@@ -140,6 +141,165 @@ object RecentsHook {
         // from a runtime NoData element's classloader, plus the Data
         // class if it can be loaded from the same package.
         installProbe9(module, classLoader)
+        // Fake-card tile fix (PROBE9 gave the Data shape, 2026-11-01):
+        // on TaskView.updateTaskViewState, before the original
+        // method renders, replace each fake NoData tile element with
+        // a Data element built from the card's own fake Task
+        // (title, icon, package, colors, lock flags; thumbnail is
+        // null in v1, as the fake Task itself has none yet). Real
+        // cards are untouched (taskId < CARD_FAKE_BASE returns
+        // early), and any failure leaves the original state in
+        // place, so this can only leave a card blank, never break
+        // Recents. Registered after the probes, so PROBE8/PROBE9
+        // logs show the replaced state and verify the fix.
+        installFakeCardTileFix(module, classLoader)
+    }
+
+    /**
+     * Fake-card tile fix, launcher side. Hooks
+     * TaskView.updateTaskViewState and, before proceeding, swaps
+     * fake NoData elements for Data elements built from the fake
+     * Task. Best-effort throughout: any failure logs and the
+     * original state proceeds unchanged.
+     */
+    private fun installFakeCardTileFix(module: XposedModule, cl: ClassLoader) {
+        try {
+            val taskViewClass = cl.loadClass("com.android.quickstep.views.TaskView")
+            for (method in taskViewClass.declaredMethods) {
+                if (!method.name.startsWith("updateTaskViewState")) continue
+                method.isAccessible = true
+                module.hook(method).intercept(object : XposedInterface.Hooker {
+                    override fun intercept(chain: XposedInterface.Chain): Any? {
+                        try {
+                            replaceNoDataWithData(chain)
+                        } catch (_: Throwable) {
+                        }
+                        return chain.proceed()
+                    }
+                })
+            }
+            Log.i(TAG, "launcher: fake card tile fix installed on TaskView.updateTaskViewState")
+        } catch (e: Throwable) {
+            Log.w(TAG, "launcher: fake card tile fix install failed", e)
+        }
+    }
+
+    private fun replaceNoDataWithData(chain: XposedInterface.Chain) {
+        val state = chain.args.getOrNull(0) ?: return
+        val taskView = chain.thisObject ?: return
+        val firstTask = runCatching {
+            val m = taskView.javaClass.methods.firstOrNull {
+                it.name == "getFirstTask" && it.parameterTypes.isEmpty()
+            }
+            m?.isAccessible = true
+            m?.invoke(taskView)
+        }.getOrNull() ?: return
+        val cardTaskId = runCatching {
+            val key = getField(firstTask, "key")
+            getField(key, "id") as? Int
+        }.getOrNull() ?: return
+        if (cardTaskId < CARD_FAKE_BASE) return
+        val tasksField = state.javaClass.declaredFields.firstOrNull {
+            it.name == "tasks"
+        } ?: return
+        tasksField.isAccessible = true
+        val tasks = tasksField.get(state) as? List<*> ?: return
+        val replaced = ArrayList<Any?>()
+        var replacedCount = 0
+        for (elem in tasks) {
+            if (elem != null && elem.javaClass.name.endsWith("\$NoData")) {
+                val elemTaskId = getField(elem, "taskId") as? Int
+                if (elemTaskId != null && elemTaskId >= CARD_FAKE_BASE) {
+                    val data = buildTileData(elem.javaClass.classLoader, firstTask, elemTaskId)
+                    if (data != null) {
+                        replaced.add(data)
+                        replacedCount++
+                        continue
+                    }
+                }
+            }
+            replaced.add(elem)
+        }
+        if (replacedCount == 0) return
+        try {
+            @Suppress("UNCHECKED_CAST")
+            (tasks as MutableList<Any?>).clear()
+            (tasks as MutableList<Any?>).addAll(replaced)
+        } catch (_: Throwable) {
+            try {
+                tasksField.set(state, replaced)
+            } catch (e: Throwable) {
+                Log.w(TAG, "launcher: fake card tile fix could not apply replaced list", e)
+                return
+            }
+        }
+        Log.i(TAG, "launcher: fake card tile fix replaced $replacedCount NoData taskId=$cardTaskId")
+    }
+
+    private fun buildTileData(loader: ClassLoader?, fakeTask: Any, fakeTaskId: Int): Any? {
+        try {
+            val dataClass = Class.forName(
+                "com.android.quickstep.recents.ui.viewmodel.TaskData\$Data", false, loader)
+            val thumbnailClass = Class.forName(
+                "com.android.systemui.shared.recents.model.ThumbnailData", false, loader)
+            val ctor = dataClass.getDeclaredConstructor(
+                Int::class.javaPrimitiveType,
+                String::class.java,
+                String::class.java,
+                String::class.java,
+                Drawable::class.java,
+                thumbnailClass,
+                Int::class.javaPrimitiveType,
+                Boolean::class.javaPrimitiveType,
+                Boolean::class.javaPrimitiveType,
+                java.time.Duration::class.java,
+                Boolean::class.javaPrimitiveType,
+            )
+            ctor.isAccessible = true
+            val title = getField(fakeTask, "title") as? String ?: ""
+            val titleDescription = getField(fakeTask, "titleDescription") as? String ?: title
+            val packageName = fakeTaskPackageName(fakeTask)
+            val icon = getField(fakeTask, "icon")
+            val backgroundColor = getField(fakeTask, "colorBackground") as? Int
+                ?: getField(fakeTask, "colorPrimary") as? Int ?: 0
+            val isLocked = getField(fakeTask, "isLocked") as? Boolean ?: false
+            val isAppLocked = getField(fakeTask, "isAppLockEnabled") as? Boolean ?: false
+            val thumbnail = getField(fakeTask, "thumbnail")?.let { thumb ->
+                if (thumbnailClass.isInstance(thumb)) thumb else null
+            }
+            try {
+                ctor.newInstance(
+                    fakeTaskId, title, titleDescription, packageName, icon, thumbnail,
+                    backgroundColor, isLocked, isAppLocked, null, false)
+            } catch (_: Throwable) {
+                ctor.newInstance(
+                    fakeTaskId, title, titleDescription, packageName, icon, thumbnail,
+                    backgroundColor, isLocked, isAppLocked, java.time.Duration.ZERO, false)
+            }
+        } catch (e: Throwable) {
+            Log.w(TAG, "launcher: fake card tile fix build Data failed taskId=$fakeTaskId", e)
+            null
+        }
+    }
+
+    private fun fakeTaskPackageName(fakeTask: Any): String {
+        val key = getField(fakeTask, "key") ?: return ""
+        val fromKey = runCatching {
+            val m = key.javaClass.methods.firstOrNull {
+                it.name == "getPackageName" && it.parameterTypes.isEmpty()
+            }
+            m?.isAccessible = true
+            m?.invoke(key) as? String
+        }.getOrNull()
+        if (!fromKey.isNullOrEmpty()) return fromKey
+        val component = getField(key, "component") ?: return ""
+        return runCatching {
+            val m = component.javaClass.methods.firstOrNull {
+                it.name == "getPackageName" && it.parameterTypes.isEmpty()
+            }
+            m?.isAccessible = true
+            m?.invoke(component) as? String
+        }.getOrNull() ?: ""
     }
 
     /**
