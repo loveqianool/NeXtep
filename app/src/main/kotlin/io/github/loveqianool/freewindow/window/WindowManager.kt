@@ -18,9 +18,7 @@ import android.view.WindowInsets
 import android.view.WindowManager as AndroidWindowManager
 import android.widget.Toast
 import io.github.loveqianool.freewindow.input.ImeHelper
-import io.github.loveqianool.freewindow.notification.AppPanel
-import io.github.loveqianool.freewindow.notification.FreeWindowNotification
-import io.github.loveqianool.freewindow.notification.RecentsBridge
+import io.github.loveqianool.freewindow.bridge.RecentsBridge
 import io.github.loveqianool.freewindow.server.DisplayEngine
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
@@ -69,12 +67,8 @@ object WindowManager : WindowHost {
     private val labelCache = ConcurrentHashMap<ComponentName, String>()
     /** Declared orientation / aspect per app; same reason, one lookup per app. */
     private val aspectCache = ConcurrentHashMap<ComponentName, AspectInfo>()
-    /** Last background list actually notified; identical lists skip rebuild. */
-    private var lastNotifiedBackground: List<FreeWindowNotification.ParkedApp>? = null
     /** Last full window list actually broadcast to Recents; same dedup idea. */
-    private var lastRecentsWindows: List<FreeWindowNotification.ParkedApp>? = null
-    /** True while exit() is closing windows one by one. */
-    private var suppressNotification = false
+    private var lastRecentsWindows: List<RecentsBridge.WindowInfo>? = null
     /** Window ids with a content-size VD resize already queued. */
     private val pendingContentResize = mutableSetOf<Int>()
     private val zOrder = mutableListOf<Int>()
@@ -120,10 +114,6 @@ object WindowManager : WindowHost {
             val pkg = intent?.data?.schemeSpecificPart ?: return
             aspectCache.keys.filter { it.packageName == pkg }.forEach { aspectCache.remove(it) }
             labelCache.keys.filter { it.packageName == pkg }.forEach { labelCache.remove(it) }
-            // Icons are the third per-app cache: unlike labels (re-queried
-            // on every panel open), icons are only decoded on a cache miss,
-            // so without this an updated app's new icon would never show.
-            AppPanel.clearIconCacheFor(pkg)
             Log.i(TAG, "package changed, cache cleared pkg=$pkg")
         }
     }
@@ -155,10 +145,10 @@ object WindowManager : WindowHost {
         val rect = clampRect(defaultRect(app, componentName), usableRect(app), app.resources.displayMetrics.density)
         val view = FreeWindowView(app, id, this)
         view.onSurfaceReady = { surface -> onSurfaceAvailable(id, surface) }
-        // addView must not throw into the panel click handler: an
+        // addView must not throw into the Recents-menu click handler: an
         // uncaught exception on SystemUI's main thread kills SystemUI
         // and with it every free window. Fail with -1 instead, and let
-        // the caller tell the user (the panel does so on -1).
+        // the caller tell the user (the menu does so on -1).
         val added = runCatching { wmRef.addView(view, windowParams(rect)) }.isSuccess
         if (!added) {
             Log.i(TAG, "openApp id=$id: addView failed")
@@ -183,9 +173,9 @@ object WindowManager : WindowHost {
             isMaximized = false,
             isMuted = inherited,
         )
-        // A new window is neither parked nor maximized, so the notification
-        // background list is unchanged and updateNotification() would skip
-        // it — but Recents needs the new card, so broadcast explicitly.
+        // Recents needs the new card right away, so broadcast explicitly
+        // (notifyRecents dedups on the full list, and a new window
+        // changes it, so this is never skipped).
         notifyRecents()
         Log.i(TAG, "openApp id=$id component=$componentName rect=$rect")
         return id
@@ -208,7 +198,7 @@ object WindowManager : WindowHost {
         rec.view.releaseSurfaceTexture()
         surfaces.remove(id)?.let { runCatching { it.release() } }
         displayEngine?.release(id)
-        updateNotification()
+        notifyRecents()
         Log.i(TAG, "closeWindow id=$id")
     }
 
@@ -260,7 +250,7 @@ object WindowManager : WindowHost {
         bringToFront(id)
         // bringToFront may have closed the window on re-add failure.
         if (windows[id] == null) return
-        updateNotification()
+        notifyRecents()
         Log.i(TAG, "expandCollapsed id=$id rect=$rect")
     }
 
@@ -277,7 +267,7 @@ object WindowManager : WindowHost {
      * Direction: the app's declared orientation when present, otherwise
      * the window's current direction. A maximized or collapsed window is
      * restored first (the fit button only exists on a windowed title bar,
-     * but panel callers could reach here in either state).
+     * but Recents-restore callers could reach here in either state).
      */
     fun fitAspect(id: Int) {
         val rec0 = windows[id] ?: return
@@ -314,7 +304,7 @@ object WindowManager : WindowHost {
         rec.view.cancelCropMode()
         rec.view.visibility = View.INVISIBLE
         windows[id] = rec.copy(isParked = true)
-        updateNotification()
+        notifyRecents()
         Log.i(TAG, "parkWindow id=$id")
     }
 
@@ -327,7 +317,7 @@ object WindowManager : WindowHost {
         // resurrect the removed record via the rec fallback below.
         val current = windows[id] ?: return
         windows[id] = current.copy(isParked = false)
-        updateNotification()
+        notifyRecents()
         Log.i(TAG, "unparkWindow id=$id")
     }
 
@@ -347,7 +337,7 @@ object WindowManager : WindowHost {
         } else {
             maximizeWindow(id)
         }
-        updateNotification()
+        notifyRecents()
     }
 
     /** Maximize the window (no-op if already maximized). */
@@ -385,33 +375,14 @@ object WindowManager : WindowHost {
     }
 
     /**
-     * Close every window, but keep the notification: it is the only entry
-     * point to the panel, and hiding it used to leave FreeWindow with no way
-     * back until SystemUI restarted. The notification's empty state
-     * ("暂无后台应用，点击打开应用面板") is the re-entry.
-     * Intermediate notification rebuilds are suppressed during the batch;
-     * one forced rebuild at the end is enough.
-     */
-    fun exit() {
-        suppressNotification = true
-        try {
-            windows.keys.toList().forEach(::closeWindow)
-        } finally {
-            suppressNotification = false
-        }
-        updateNotification(force = true)
-        Log.i(TAG, "exit: all windows closed, notification kept")
-    }
-
-    /**
-     * "Go to this window", the unified panel/notification row-tap semantics:
+     * "Go to this window", the unified Recents-card-tap semantics:
      * a parked window is shown, and a maximized one is additionally restored
      * to its windowed size (a bare unpark on a maximized window is a no-op
      * when it is already on top).
      */
     fun restoreWindow(id: Int) {
         val rec = windows[id] ?: return
-        // Panel row tap / app-list tap on a collapsed window restores it;
+        // Recents-card tap on a collapsed window restores it;
         // a bare unpark would only show the icon again, not the window.
         if (rec.isCollapsed) {
             expandCollapsed(id)
@@ -441,21 +412,6 @@ object WindowManager : WindowHost {
 
     override fun onConfigurationChanged(id: Int) {
         reclampWindow(id)
-    }
-
-    /** Re-clamp every window to the current usable area (panel-open safety net). */
-    fun reclampAllWindows() {
-        val app = appContext ?: return
-        windows.keys.toList().forEach { id ->
-            val rec = windows[id] ?: return@forEach
-            if (rec.isCollapsed) {
-                reclampCollapsed(id)
-            } else if (rec.isMaximized) {
-                applyRect(id, usableRect(app))
-            } else {
-                applyRect(id, currentRect(rec.view))
-            }
-        }
     }
 
     private fun reclampWindow(id: Int) {
@@ -1090,33 +1046,15 @@ object WindowManager : WindowHost {
 
     private fun densityDpi(app: Context): Int = app.resources.displayMetrics.densityDpi
 
-    // ------------------------------------------------------------ notification
+    // ------------------------------------------------------------ recents list
 
-    // 返回后台区列表：parked（藏起来的）+ maximized（最大化的）。
-    // 之前叫 getParkedApps，名不副实，2026-10-18 改名。
-    fun getBackgroundApps(): List<FreeWindowNotification.ParkedApp> {
-        val app = appContext ?: return emptyList()
-        // Same order as the panel (topmost first): windows.values iterates
-        // in hash order, which listed the notification in the opposite order.
-        val order = synchronized(zOrder) { zOrder.reversed() }
-        return order.mapNotNull { id ->
-            windows[id]?.takeIf { it.isParked || it.isMaximized }?.let { rec ->
-                FreeWindowNotification.ParkedApp(
-                    rec.id,
-                    appLabel(app, rec.componentName),
-                    rec.isMaximized,
-                )
-            }
-        }
-    }
-
-    /** All windows for the panel, topmost first, with full state for rows. */
-    fun getPanelWindows(): List<FreeWindowNotification.ParkedApp> {
+    /** All windows for Recents, topmost first, with full state for cards. */
+    fun getRecentsWindows(): List<RecentsBridge.WindowInfo> {
         val app = appContext ?: return emptyList()
         val order = synchronized(zOrder) { zOrder.reversed() }
         return order.mapNotNull { id ->
             windows[id]?.let { rec ->
-                FreeWindowNotification.ParkedApp(
+                RecentsBridge.WindowInfo(
                     windowId = rec.id,
                     label = appLabel(app, rec.componentName),
                     isMaximized = rec.isMaximized,
@@ -1131,32 +1069,17 @@ object WindowManager : WindowHost {
     }
 
     /**
-     * Broadcast the full window list to Recents (see RecentsBridge). Called
-     * from updateNotification() so every window-state change that already
-     * refreshes the notification also refreshes Recents, plus from openApp()
-     * (see there). Runs before the suppress/dedup checks below: during
-     * exit(), windows close one by one, and Recents should lose their cards
-     * as they close, not only at the final forced update.
+     * Broadcast the full window list to Recents (see RecentsBridge).
+     * Called on every window-state change, plus explicitly from openApp()
+     * (see there). Identical lists are skipped — e.g. restoreWindow()
+     * unparks then toggles, and the first step changes nothing here.
      */
     private fun notifyRecents() {
         val app = appContext ?: return
-        val list = getPanelWindows()
+        val list = getRecentsWindows()
         if (list == lastRecentsWindows) return
         lastRecentsWindows = list
         RecentsBridge.broadcastWindows(app, list)
-    }
-
-    private fun updateNotification(force: Boolean = false) {
-        notifyRecents()
-        if (suppressNotification && !force) return
-        val app = appContext ?: return
-        val background = getBackgroundApps()
-        // Rebuilding the notification (new PendingIntents included) is
-        // wasted work when the list is unchanged — e.g. restoreWindow()
-        // unparks then toggles, and the first step changes nothing here.
-        if (!force && background == lastNotifiedBackground) return
-        lastNotifiedBackground = background
-        FreeWindowNotification.update(app, background)
     }
 
     private fun appLabel(app: Context, component: ComponentName): String {

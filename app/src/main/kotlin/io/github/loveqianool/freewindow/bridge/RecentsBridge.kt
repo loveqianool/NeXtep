@@ -1,4 +1,4 @@
-package io.github.loveqianool.freewindow.notification
+package io.github.loveqianool.freewindow.bridge
 
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -15,7 +15,7 @@ import android.util.Log
  *
  * - SystemUI -> launcher: [ACTION_WINDOWS_CHANGED] whenever the window
  *   list changes (open, close, park, unpark, collapse, expand, maximize,
- *   restore — anything that goes through WindowManager.updateNotification
+ *   restore — anything that goes through WindowManager.notifyRecents
  *   or openApp). The payload is parallel arrays, not a Parcelable, so the
  *   launcher side only needs the extra keys below, not a shared class:
  *   [EXTRA_WINDOW_IDS], [EXTRA_PACKAGES], [EXTRA_LABELS], [EXTRA_FLAGS],
@@ -25,11 +25,11 @@ import android.util.Log
  * - Launcher -> SystemUI: [ACTION_WINDOW_TASK] (window a Recents task:
  *   [EXTRA_PACKAGE], [EXTRA_CLASS], [EXTRA_TASK_ID] — the Recents task id
  *   on the main display, kept for a future true task-move; v1 windows by
- *   relaunching on the VD, same as the panel open), [ACTION_RESTORE_WINDOW]
- *   and [ACTION_CLOSE_WINDOW] (both carry [FreeWindowNotification.EXTRA_WINDOW_ID]),
+ *   relaunching on the VD, same as a Recents-menu open), [ACTION_RESTORE_WINDOW]
+ *   and [ACTION_CLOSE_WINDOW] (both carry [EXTRA_WINDOW_ID]),
  *   and [ACTION_REQUEST_WINDOWS] (launcher asks for a fresh list, e.g.
  *   when Recents opens and its cache may be empty or stale — this also
- *   picks up mute/crop changes, which do not go through updateNotification
+ *   picks up mute/crop changes, which do not go through notifyRecents
  *   and therefore do not trigger a WINDOWS_CHANGED broadcast).
  *
  * Both receivers are EXPORTED, which is required for delivery between two
@@ -38,7 +38,7 @@ import android.util.Log
  * window-management data — window ids, package names, labels, states —
  * no credentials or user data, and every inbound window id / component is
  * validated by WindowManager before it acts (unknown ids are ignored,
- * a bad component fails the open like a panel open would). A hostile app
+ * a bad component fails the open like a Recents-menu open would). A hostile app
  * sending these broadcasts could at worst open, restore or close a free
  * window, which the user can already do from the launcher.
  */
@@ -62,6 +62,20 @@ object RecentsBridge {
     const val EXTRA_PACKAGE = "io.github.loveqianool.freewindow.extra.PACKAGE"
     const val EXTRA_CLASS = "io.github.loveqianool.freewindow.extra.CLASS"
     const val EXTRA_TASK_ID = "io.github.loveqianool.freewindow.extra.TASK_ID"
+    /** Window id carried by restore/close broadcasts (was on the notification). */
+    const val EXTRA_WINDOW_ID = "io.github.loveqianool.freewindow.extra.WINDOW_ID"
+
+    /** One free window, as listed to Recents and as broadcast to the launcher. */
+    data class WindowInfo(
+        val windowId: Int,
+        val label: String,
+        val isMaximized: Boolean = false,
+        val component: android.content.ComponentName? = null,
+        val isParked: Boolean = false,
+        val isMuted: Boolean = false,
+        val isCollapsed: Boolean = false,
+        val isCropped: Boolean = false,
+    )
 
     const val FLAG_PARKED = 1
     const val FLAG_COLLAPSED = 2
@@ -90,14 +104,12 @@ object RecentsBridge {
                     listener?.onWindowTask(pkg, cls, taskId)
                 }
                 ACTION_RESTORE_WINDOW -> {
-                    val windowId = intent.getIntExtra(
-                        FreeWindowNotification.EXTRA_WINDOW_ID, -1)
+                    val windowId = intent.getIntExtra(EXTRA_WINDOW_ID, -1)
                     Log.i(TAG, "recents: restore window=$windowId")
                     if (windowId >= 0) listener?.onRestoreWindow(windowId)
                 }
                 ACTION_CLOSE_WINDOW -> {
-                    val windowId = intent.getIntExtra(
-                        FreeWindowNotification.EXTRA_WINDOW_ID, -1)
+                    val windowId = intent.getIntExtra(EXTRA_WINDOW_ID, -1)
                     Log.i(TAG, "recents: close window=$windowId")
                     if (windowId >= 0) listener?.onCloseWindow(windowId)
                 }
@@ -116,7 +128,7 @@ object RecentsBridge {
      * launcher package is not known on this side yet (it varies by ROM and
      * by the user's default launcher), and the launcher's receiver is
      * registered EXPORTED for exactly this broadcast. */
-    fun broadcastWindows(context: Context, windows: List<FreeWindowNotification.ParkedApp>) {
+    fun broadcastWindows(context: Context, windows: List<WindowInfo>) {
         val flags = IntArray(windows.size) { i ->
             val w = windows[i]
             var f = 0

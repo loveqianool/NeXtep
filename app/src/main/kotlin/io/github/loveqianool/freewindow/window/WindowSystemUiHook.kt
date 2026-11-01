@@ -5,9 +5,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.util.Log
 import android.widget.Toast
-import io.github.loveqianool.freewindow.notification.AppPanel
-import io.github.loveqianool.freewindow.notification.FreeWindowNotification
-import io.github.loveqianool.freewindow.notification.RecentsBridge
+import io.github.loveqianool.freewindow.bridge.RecentsBridge
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -17,18 +15,14 @@ import java.util.concurrent.atomic.AtomicBoolean
  * [install] when `com.android.systemui` is loaded. SystemUI's
  * [Application] is not available yet at that point, so we poll
  * `ActivityThread.currentApplication()` (via reflection — it is not visible
- * in the compile SDK) until it appears, then initialize [WindowManager] and
- * the persistent notification.
+ * in the compile SDK) until it appears, then initialize [WindowManager]
+ * and the Recents bridge. Windows are managed from system Recents;
+ * there is no notification and no panel anymore (removed 2026-11-01,
+ * once Recents cards proved out on device).
  */
 object WindowSystemUiHook {
     private const val TAG = "FreeWindow"
     private val started = AtomicBoolean(false)
-
-    // Singleton guard: onShowPanel() used to create a fresh AppPanel on every
-    // broadcast, so a double delivery stacked two dialogs (AppPanel.show()'s
-    // isShowing check only guards one instance). A dismissed panel reports
-    // isShowing() == false, so the next tap still creates a new one.
-    private var currentPanel: AppPanel? = null
 
     fun install() {
         if (!started.compareAndSet(false, true)) return
@@ -39,9 +33,9 @@ object WindowSystemUiHook {
                 return@Thread
             }
             WindowManager.init(app)
-            // Shared by the panel's app-list tap and the Recents menu's
-            // "FreeWindow" item: already open -> restore that window,
-            // otherwise open a new one (or complain about the limit/failure).
+            // The Recents menu's "FreeWindow" item: already open ->
+            // restore that window, otherwise open a new one (or complain
+            // about the limit/failure).
             val openOrRestore: (Context, ComponentName) -> Unit = { ctx, component ->
                 val existing = WindowManager.findWindowId(component)
                 if (existing != null) {
@@ -65,7 +59,7 @@ object WindowSystemUiHook {
             RecentsBridge.listener = object : RecentsBridge.Listener {
                 override fun onWindowTask(packageName: String, className: String, taskId: Int) {
                     // taskId is the Recents task on the main display; v1
-                    // windows by relaunching on the VD (same as panel open).
+                    // windows by relaunching on the VD.
                     // A true task-move would use it; that is a later step.
                     openOrRestore(app, ComponentName(packageName, className))
                 }
@@ -80,65 +74,20 @@ object WindowSystemUiHook {
                     // Bypass WindowManager.notifyRecents()'s dedup: a
                     // launcher that just started has an empty cache, so it
                     // needs the current list even if nothing changed.
-                    RecentsBridge.broadcastWindows(app, WindowManager.getPanelWindows())
+                    RecentsBridge.broadcastWindows(app, WindowManager.getRecentsWindows())
                 }
             }
             RecentsBridge.register(app)
-            FreeWindowNotification.listener = object : FreeWindowNotification.Listener {
-                override fun onShowPanel() {
-                    Log.i(TAG, "show panel requested")
-                    if (currentPanel?.isShowing() == true) {
-                        Log.i(TAG, "panel already showing, ignore")
-                        return
-                    }
-                    // Safety net for rotation: if the view configuration
-                    // dispatch did not fire for some window, opening the
-                    // panel (reachable via the notification regardless of
-                    // window positions) pulls every window back in bounds.
-                    WindowManager.reclampAllWindows()
-                    try {
-                        val ctx = app ?: return
-                        val panel = AppPanel(
-                            ctx,
-                            getWindows = { WindowManager.getPanelWindows() },
-                            onAppSelected = { component ->
-                                openOrRestore(ctx, component)
-                            },
-                            onWindowSelected = { windowId ->
-                                WindowManager.restoreWindow(windowId)
-                            },
-                            onWindowMaximized = { windowId ->
-                                // Unpark first (if parked), then toggle maximize/restore.
-                                WindowManager.unparkWindow(windowId)
-                                WindowManager.toggleMaximize(windowId)
-                            },
-                            onWindowClosed = { windowId ->
-                                WindowManager.closeWindow(windowId)
-                            },
-                            onWindowParked = { windowId ->
-                                WindowManager.parkWindow(windowId)
-                            },
-                            onWindowMuted = { windowId ->
-                                WindowManager.onToggleMute(windowId)
-                            },
-                            onWindowCropReset = { windowId ->
-                                WindowManager.resetCrop(windowId)
-                            },
-                        )
-                        currentPanel = panel
-                        panel.show()
-                    } catch (e: Throwable) {
-                        Log.i(TAG, "show panel failed: ${e.message}")
-                    }
-                }
-
-                override fun onUnpark(windowId: Int) = WindowManager.unparkWindow(windowId)
-
-                override fun onRestore(windowId: Int) = WindowManager.restoreWindow(windowId)
-
-                override fun onExit() = WindowManager.exit()
+            // One-time migration, kept idempotent: the old build showed
+            // an ongoing notification (id 41041, legacy 41). Without a
+            // cancel here it would linger in the shade after updating
+            // until the next SystemUI restart. Cancelling a
+            // non-existent id is a no-op, so this is safe every start.
+            runCatching {
+                val nm = app.getSystemService(android.app.NotificationManager::class.java)
+                nm.cancel(41041)
+                nm.cancel(41)
             }
-            FreeWindowNotification.show(app)
             Log.i(TAG, "WindowSystemUiHook installed")
         }, "FreeWindowInit").apply { isDaemon = true }.start()
     }

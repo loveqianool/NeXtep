@@ -27,7 +27,7 @@ class HookEntry : XposedModule() {
         // code returned before logging anything. Bypassing the gate for
         // the launcher only is safe: RecentsHook.install guards against
         // double-install, and the SystemUI branch below keeps its gate
-        // unchanged (it works — notification logs prove it).
+        // unchanged (it works — SystemUI logs prove it).
         if (param.packageName == "com.android.launcher3") {
             Log.i(TAG, "launcher loaded")
             val classLoader = packageClassLoader(param)

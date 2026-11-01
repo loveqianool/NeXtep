@@ -5,8 +5,7 @@ import android.content.Intent
 import android.util.Log
 import io.github.libxposed.api.XposedInterface
 import io.github.libxposed.api.XposedModule
-import io.github.loveqianool.freewindow.notification.FreeWindowNotification
-import io.github.loveqianool.freewindow.notification.RecentsBridge
+import io.github.loveqianool.freewindow.bridge.RecentsBridge
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -138,7 +137,7 @@ object RecentsTaskHook {
             ?: throw IllegalStateException("no system context for $action")
         val intent = Intent(action).apply {
             setPackage("com.android.systemui")
-            putExtra(FreeWindowNotification.EXTRA_WINDOW_ID, fakeWindowId(taskId))
+            putExtra(RecentsBridge.EXTRA_WINDOW_ID, fakeWindowId(taskId))
         }
         ctx.sendBroadcast(intent)
         Log.i(TAG, "recents-tasks: $action window=${fakeWindowId(taskId)}")

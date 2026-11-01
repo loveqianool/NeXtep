@@ -25,7 +25,7 @@ interface WindowHost {
     /** Maximize button (⛶): toggle between windowed and maximized. */
     fun onToggleMaximize(id: Int)
 
-    /** Mute (🔊/🔇 in the hamburger menu, plus the panel row): toggle per-window audio mute. */
+    /** Mute (🔊/🔇 in the hamburger menu): toggle per-window audio mute. */
     fun onToggleMute(id: Int)
 
     /** Close button (✕). */

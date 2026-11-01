@@ -14,7 +14,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import io.github.libxposed.api.XposedInterface
 import io.github.libxposed.api.XposedModule
-import io.github.loveqianool.freewindow.notification.RecentsBridge
+import io.github.loveqianool.freewindow.bridge.RecentsBridge
 
 /**
  * Launcher (com.android.launcher3, Trebuchet) side of Recents integration.
@@ -40,7 +40,7 @@ import io.github.loveqianool.freewindow.notification.RecentsBridge
  * failed lookup on device is diagnostic information, not a crash.
  *
  * Clicking the option sends [RecentsBridge.ACTION_WINDOW_TASK] to
- * SystemUI (same broadcast protocol as the notification actions) and
+ * SystemUI (same broadcast protocol as the Recents card actions) and
  * closes the menu. It deliberately does NOT dismiss Recents in v1: the
  * free window is a SystemUI overlay, so it is already visible over
  * Recents, and the user leaves Recents with back / home as usual.
