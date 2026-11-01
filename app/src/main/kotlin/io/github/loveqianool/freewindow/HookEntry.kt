@@ -15,11 +15,19 @@ class HookEntry : XposedModule() {
     }
 
     override fun onPackageLoaded(param: PackageLoadedParam) {
-        if (!param.isFirstPackage) return
-        if (param.packageName == "com.android.systemui") {
-            Log.i(TAG, "systemui loaded")
-            WindowSystemUiHook.install()
-        }
+        // Launcher branch first, deliberately BEFORE the isFirstPackage
+        // gate below. Device evidence: on the latest build, with the
+        // launcher scoped and after a reboot, operating Recents produced
+        // zero FreeWindow logs at all — not even "launcher loaded", and
+        // RecentsHook.install itself logs on success and on every
+        // failure, so a hook failure cannot explain total silence. The
+        // only silent gate before those logs is isFirstPackage: if the
+        // launcher process loads launcher3 with isFirstPackage=false
+        // (e.g. another package loads first in that process), the old
+        // code returned before logging anything. Bypassing the gate for
+        // the launcher only is safe: RecentsHook.install guards against
+        // double-install, and the SystemUI branch below keeps its gate
+        // unchanged (it works — notification logs prove it).
         if (param.packageName == "com.android.launcher3") {
             Log.i(TAG, "launcher loaded")
             val classLoader = packageClassLoader(param)
@@ -28,6 +36,12 @@ class HookEntry : XposedModule() {
             } else {
                 Log.w(TAG, "launcher: no package classloader, menu hook skipped")
             }
+            return
+        }
+        if (!param.isFirstPackage) return
+        if (param.packageName == "com.android.systemui") {
+            Log.i(TAG, "systemui loaded")
+            WindowSystemUiHook.install()
         }
     }
 
