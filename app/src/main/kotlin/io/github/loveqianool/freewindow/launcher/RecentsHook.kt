@@ -88,6 +88,120 @@ object RecentsHook {
         // Probe SingleTask and GroupTask construction only; the Task /
         // TaskKey tables are already in PROBE4's dump.
         installProbe5(module, classLoader)
+        // TEMPORARY PROBE6 (remove with PROBE3, 2026-11-01): PROBE5
+        // settled SingleTask construction — SingleTask(Task) — but
+        // the shared-recents Task class cannot be dumped at install
+        // time (stub / NOT FOUND). Dump it at runtime instead, from
+        // a real Task instance taken out of the applyLoadPlan list,
+        // where the real class is actually loaded. Logging-only.
+        installProbe6(module, classLoader)
+    }
+
+    /**
+     * TEMPORARY PROBE6, launcher side. Hooks RecentsView.applyLoadPlan
+     * only to inspect its arguments, then proceeds unchanged. No fake
+     * card is injected yet; this probe only learns how a real Task
+     * is built, so the injection can clone one.
+     */
+    private fun installProbe6(module: XposedModule, cl: ClassLoader) {
+        try {
+            val clazz = cl.loadClass("com.android.quickstep.views.RecentsView")
+            val method = clazz.declaredMethods.firstOrNull {
+                it.name == "applyLoadPlan" && it.parameterTypes.size == 2
+            } ?: run {
+                Log.w(TAG, "launcher: PROBE6 applyLoadPlan not found")
+                return
+            }
+            method.isAccessible = true
+            module.hook(method).intercept(object : XposedInterface.Hooker {
+                override fun intercept(chain: XposedInterface.Chain): Any? {
+                    val result = chain.proceed()
+                    try {
+                        val list = chain.args.getOrNull(0) as? List<*>
+                        Log.i(
+                            TAG,
+                            "launcher: PROBE6 applyLoadPlan listClass=${list?.javaClass?.name} " +
+                                "listSize=${list?.size} intArg=${chain.args.getOrNull(1) as? Int}",
+                        )
+                        val first = list?.firstOrNull() ?: return result
+                        Log.i(TAG, "launcher: PROBE6 firstItemClass=${first.javaClass.name}")
+                        // SingleTask.getTask() is the real Task object;
+                        // its class is the runtime Task class, not the
+                        // install-time stub that PROBE4 could not dump.
+                        val getTask = first.javaClass.methods.firstOrNull {
+                            it.name == "getTask" && it.parameterTypes.isEmpty()
+                        } ?: run {
+                            Log.w(TAG, "launcher: PROBE6 first item has no getTask()")
+                            return result
+                        }
+                        getTask.isAccessible = true
+                        val task = getTask.invoke(first) ?: return result
+                        val taskClass = task.javaClass
+                        Log.i(TAG, "launcher: PROBE6 taskClass=${taskClass.name}")
+                        for (m in taskClass.declaredMethods) {
+                            Log.i(
+                                TAG,
+                                "launcher: PROBE6 dump task method ${m.name}(" +
+                                    m.parameterTypes.joinToString { it.name } + "):${m.returnType.name}",
+                            )
+                        }
+                        for (ctor in taskClass.declaredConstructors) {
+                            Log.i(
+                                TAG,
+                                "launcher: PROBE6 dump task ctor(" +
+                                    ctor.parameterTypes.joinToString { it.name } + ")",
+                            )
+                        }
+                        for (field in taskClass.declaredFields) {
+                            Log.i(
+                                TAG,
+                                "launcher: PROBE6 dump task field ${field.name}:${field.type.name}",
+                            )
+                        }
+                        // TaskKey is the task's identity (id, component,
+                        // baseIntent). Its class comes from the task's
+                        // key field, again at runtime, not install time.
+                        var keyClass: Class<*>? = null
+                        for (field in taskClass.declaredFields) {
+                            if (field.name == "key") {
+                                keyClass = field.type
+                                break
+                            }
+                        }
+                        if (keyClass != null) {
+                            for (m in keyClass.declaredMethods) {
+                                Log.i(
+                                    TAG,
+                                    "launcher: PROBE6 dump key method ${m.name}(" +
+                                        m.parameterTypes.joinToString { it.name } + "):${m.returnType.name}",
+                                )
+                            }
+                            for (ctor in keyClass.declaredConstructors) {
+                                Log.i(
+                                    TAG,
+                                    "launcher: PROBE6 dump key ctor(" +
+                                        ctor.parameterTypes.joinToString { it.name } + ")",
+                                )
+                            }
+                            for (field in keyClass.declaredFields) {
+                                Log.i(
+                                    TAG,
+                                    "launcher: PROBE6 dump key field ${field.name}:${field.type.name}",
+                                )
+                            }
+                        } else {
+                            Log.w(TAG, "launcher: PROBE6 task has no key field")
+                        }
+                    } catch (e: Throwable) {
+                        Log.w(TAG, "launcher: PROBE6 inspect failed", e)
+                    }
+                    return result
+                }
+            })
+            Log.i(TAG, "launcher: PROBE6 hook installed on RecentsView.applyLoadPlan")
+        } catch (e: Throwable) {
+            Log.w(TAG, "launcher: PROBE6 install failed", e)
+        }
     }
 
     /**
