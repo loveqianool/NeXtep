@@ -237,13 +237,23 @@ object RecentsTaskHook {
 
     private fun appendFakes(chain: XposedInterface.Chain, original: Any?): Any? {
         val list = original as? List<*> ?: return original
+        // TEMPORARY PROBE (remove after card diagnosis, 2026-11-01):
+        // the silent early returns below hide which branch drops the
+        // fake cards — log every call so the next device grep settles
+        // whether getRecentTasks is never called, called with the wrong
+        // UID, or called after the cache was cleared.
+        val windows = synchronized(cacheLock) { cachedWindows }
+        Log.i(
+            TAG,
+            "recents-tasks: PROBE getRecentTasks callerUid=${Binder.getCallingUid()} " +
+                "launcherUid=$launcherUid orig=${list.size} cached=${windows.size}",
+        )
         if (launcherUid < 0) return original
         // Only the launcher's own calls get fake cards; internal and
         // other callers see the real list untouched.
         if (Binder.getCallingUid() != launcherUid) return original
         // Already faked (one overload calling another): do not duplicate.
         if (list.any { isFakeIdOf(it) }) return original
-        val windows = synchronized(cacheLock) { cachedWindows }
         if (windows.isEmpty()) return original
         val context = (getField(chain.thisObject, "mContext") as? Context)
             ?: systemContext ?: return original
