@@ -129,6 +129,118 @@ object RecentsHook {
         // that moment, to see whether the fake Task's title survived
         // or was cleared before the tile state was built.
         installProbe8(module, classLoader)
+        // TEMPORARY PROBE9 (remove with PROBE3, 2026-11-01): PROBE8
+        // settled it — the fake card's own Task is correct
+        // (title 'Haven (自由窗口)', icon present), but its tile
+        // state element is TaskData$NoData with only a taskId, so
+        // the tile loader found no system task for the fake id and
+        // gave up. The fix is to replace that NoData element with
+        // a Data element built from the fake Task, which needs the
+        // Data class's full name, fields and constructors. Log them
+        // from a runtime NoData element's classloader, plus the Data
+        // class if it can be loaded from the same package.
+        installProbe9(module, classLoader)
+    }
+
+    /**
+     * TEMPORARY PROBE9, launcher side. Logging-only: on
+     * TaskView.updateTaskViewState, for fake cards, log the tile
+     * element's full class name, its classloader, and the Data
+     * sibling class's methods, constructors and fields, so the fix
+     * can construct a Data element without guessing its shape.
+     */
+    private fun installProbe9(module: XposedModule, cl: ClassLoader) {
+        try {
+            val taskViewClass = cl.loadClass("com.android.quickstep.views.TaskView")
+            for (method in taskViewClass.declaredMethods) {
+                if (!method.name.startsWith("updateTaskViewState")) continue
+                method.isAccessible = true
+                module.hook(method).intercept(object : XposedInterface.Hooker {
+                    override fun intercept(chain: XposedInterface.Chain): Any? {
+                        val result = chain.proceed()
+                        try {
+                            val state = chain.args.getOrNull(0) ?: return result
+                            val taskView = chain.thisObject
+                            val firstTask = runCatching {
+                                val m = taskView?.javaClass?.methods?.firstOrNull {
+                                    it.name == "getFirstTask" && it.parameterTypes.isEmpty()
+                                }
+                                m?.isAccessible = true
+                                m?.invoke(taskView)
+                            }.getOrNull()
+                            val taskId = runCatching {
+                                val key = getField(firstTask, "key")
+                                getField(key, "id") as? Int
+                            }.getOrNull()
+                            if (taskId == null || taskId < CARD_FAKE_BASE) return result
+                            val tasksField = state.javaClass.declaredFields.firstOrNull {
+                                it.name == "tasks"
+                            } ?: return result
+                            tasksField.isAccessible = true
+                            val tasks = tasksField.get(state) as? List<*> ?: return result
+                            val firstElem = tasks.firstOrNull() ?: return result
+                            val elemClass = firstElem.javaClass
+                            Log.i(
+                                TAG,
+                                "launcher: PROBE9 tile element class=${elemClass.name} " +
+                                    "loader=${elemClass.classLoader?.javaClass?.simpleName}",
+                            )
+                            // Sibling Data class: same outer class as
+                            // NoData, with 'Data' as the nested name.
+                            val outerName = elemClass.name.substringBeforeLast('$')
+                            val dataNames = listOf(
+                                "$outerName\$Data",
+                                "${elemClass.name.substringBefore("NoData")}Data",
+                            ).distinct()
+                            for (dataName in dataNames) {
+                                try {
+                                    val dataClass = Class.forName(
+                                        dataName, false, elemClass.classLoader)
+                                    for (m in dataClass.declaredMethods) {
+                                        Log.i(
+                                            TAG,
+                                            "launcher: PROBE9 dump $dataName method ${m.name}(" +
+                                                m.parameterTypes.joinToString { it.name } +
+                                                "):${m.returnType.name}",
+                                        )
+                                    }
+                                    for (ctor in dataClass.declaredConstructors) {
+                                        Log.i(
+                                            TAG,
+                                            "launcher: PROBE9 dump $dataName ctor(" +
+                                                ctor.parameterTypes.joinToString { it.name } + ")",
+                                        )
+                                    }
+                                    for (field in dataClass.declaredFields) {
+                                        Log.i(
+                                            TAG,
+                                            "launcher: PROBE9 dump $dataName field " +
+                                                "${field.name}:${field.type.name}",
+                                        )
+                                    }
+                                } catch (e: Throwable) {
+                                    Log.w(TAG, "launcher: PROBE9 dump $dataName NOT FOUND")
+                                }
+                            }
+                            // Also dump the NoData class itself, so its
+                            // taskId field name is confirmed for the fix.
+                            for (field in elemClass.declaredFields) {
+                                Log.i(
+                                    TAG,
+                                    "launcher: PROBE9 dump ${elemClass.name} field " +
+                                        "${field.name}:${field.type.name}",
+                                )
+                            }
+                        } catch (_: Throwable) {
+                        }
+                        return result
+                    }
+                })
+            }
+            Log.i(TAG, "launcher: PROBE9 hook installed on TaskView.updateTaskViewState")
+        } catch (e: Throwable) {
+            Log.w(TAG, "launcher: PROBE9 install failed", e)
+        }
     }
 
     /**
