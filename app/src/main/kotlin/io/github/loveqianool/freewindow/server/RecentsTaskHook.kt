@@ -182,10 +182,17 @@ object RecentsTaskHook {
                                 val result = chain.proceed()
                                 try {
                                     val size = (result as? List<*>)?.size
+                                    // PROBE3 fix: log arg values for Int
+                                    // args (maxNum / flags / userId) so a
+                                    // top-task query (maxNum=1) can be
+                                    // told apart from a Recents-list query.
+                                    val argValues = chain.args.joinToString {
+                                        if (it is Int) it.toString() else it?.javaClass?.simpleName ?: "null"
+                                    }
                                     Log.i(
                                         TAG,
                                         "recents-tasks: PROBE3 getTasks callerUid=${Binder.getCallingUid()} " +
-                                            "args=${chain.args.size} " +
+                                            "args=[$argValues] " +
                                             (if (size != null) "resultSize=$size" else "result=${result?.javaClass?.simpleName}"),
                                     )
                                 } catch (_: Throwable) {

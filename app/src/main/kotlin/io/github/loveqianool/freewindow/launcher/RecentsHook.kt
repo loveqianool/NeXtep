@@ -83,13 +83,22 @@ object RecentsHook {
      */
     private fun installProbe3(module: XposedModule, cl: ClassLoader) {
         try {
-            // 1. Method tables: what task-list classes exist, and what
-            // task methods they actually declare on this build.
-            dumpProbe3Methods(cl, "com.android.quickstep.RecentsModel")
-            dumpProbe3Methods(cl, "com.android.quickstep.views.RecentsView")
+            // 1. Method + field tables: what task-list classes exist, what
+            // task methods they declare, and where the task list lives.
+            // Full parameter type names (not just simple names) so the
+            // next probe can load the LoadPlan class by its real name.
+            dumpProbe3Class(cl, "com.android.quickstep.RecentsModel")
+            dumpProbe3Class(cl, "com.android.quickstep.views.RecentsView")
+            dumpProbe3Class(cl, "com.android.quickstep.views.RecentsView\$LoadPlan")
+            dumpProbe3Class(cl, "com.android.quickstep.RecentsModel\$LoadPlan")
             // 2. Client-side task query / click / swipe entry points.
+            // ActivityTaskManager is the newer client wrapper; the older
+            // ActivityManager wrapper may not even exist on this build.
             hookProbe3ByName(module, "android.app.ActivityManager") { name ->
                 name == "getRecentTasks" || name == "startActivityFromRecents" || name == "removeTask"
+            }
+            hookProbe3ByName(module, "android.app.ActivityTaskManager") { name ->
+                name == "getTasks" || name == "getRecentTasks"
             }
             // 3. Data-layer task methods: load / change / remove tasks.
             hookProbe3Class(module, cl, "com.android.quickstep.RecentsModel") { name ->
@@ -101,23 +110,33 @@ object RecentsHook {
                 "Tasks" in name || "LoadPlan" in name
             }
             // 5. Card click / dismiss handlers, for later fake-card taps.
+            // PROBE3 fix: the old "launch" substring matched the synthetic
+            // shouldShowSplash$...Launcher3... name and spammed the log.
+            // Only methods starting with launch, plus dismissTask, are
+            // real card actions; dismiss-button UI methods are excluded.
             hookProbe3Class(module, cl, "com.android.quickstep.views.TaskView") { name ->
                 val lower = name.lowercase()
-                "launch" in lower || "dismiss" in lower
+                lower.startsWith("launch") || "dismisstask" in lower
             }
         } catch (e: Throwable) {
             Log.w(TAG, "launcher: PROBE3 install failed", e)
         }
     }
 
-    private fun dumpProbe3Methods(cl: ClassLoader, className: String) {
+    private fun dumpProbe3Class(cl: ClassLoader, className: String) {
         try {
             val clazz = cl.loadClass(className)
             for (method in clazz.declaredMethods) {
                 Log.i(
                     TAG,
                     "launcher: PROBE3 dump $className method ${method.name}(" +
-                        method.parameterTypes.joinToString { it.simpleName } + ")",
+                        method.parameterTypes.joinToString { it.name } + ")",
+                )
+            }
+            for (field in clazz.declaredFields) {
+                Log.i(
+                    TAG,
+                    "launcher: PROBE3 dump $className field ${field.name}:${field.type.name}",
                 )
             }
         } catch (e: Throwable) {
