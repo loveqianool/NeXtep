@@ -12,7 +12,7 @@ import kotlin.math.hypot
 
 /**
  * Title bar for a free window: drag to move, plus a hamburger menu
- * (collapse / fit / crop / mute) and park / maximize / close buttons.
+ * (fit / crop / mute), collapse / park / maximize / close buttons.
  * 38dp tall, semi-transparent black.
  */
 class TitleBar @JvmOverloads constructor(
@@ -23,6 +23,9 @@ class TitleBar @JvmOverloads constructor(
 ) : LinearLayout(context, attrs) {
 
     private val menuBtn = makeButton("☰", "更多功能")
+    // Collapse-to-icon lives on the bar itself, not in the menu: it
+    // is used too often to hide behind a tap. Left of park, as before.
+    private val collapseBtn = makeButton("▲", "缩成图标")
     private val parkBtn = makeButton("▽", "最小化到后台")
     private val maxBtn = makeButton("⛶", "最大化")
     private val closeBtn = makeButton("✕", "关闭窗口")
@@ -66,11 +69,13 @@ class TitleBar @JvmOverloads constructor(
         addView(spacer)
         addView(statusView)
         addView(menuBtn)
+        addView(collapseBtn)
         addView(parkBtn)
         addView(maxBtn)
         addView(closeBtn)
 
         menuBtn.setOnClickListener { showMenu() }
+        collapseBtn.setOnClickListener { host.onCollapse(windowId) }
         parkBtn.setOnClickListener { host.onPark(windowId) }
         maxBtn.setOnClickListener { host.onToggleMaximize(windowId) }
         closeBtn.setOnClickListener { host.onClose(windowId) }
@@ -171,23 +176,22 @@ class TitleBar @JvmOverloads constructor(
     }
 
     // Built fresh on every open so mute/crop labels track current state.
+    // Collapse is no longer here: it has its own title-bar button now.
     private fun showMenu() {
         val popup = android.widget.PopupMenu(context, menuBtn)
         val menu = popup.menu
-        menu.add(0, MENU_COLLAPSE, 0, "缩成图标")
-        menu.add(0, MENU_FIT, 1, "按应用宽高比适配")
+        menu.add(0, MENU_FIT, 0, "按应用宽高比适配")
         menu.add(
-            0, MENU_CROP, 2,
+            0, MENU_CROP, 1,
             when {
                 cropMode -> "取消框选"
                 cropped -> "恢复完整画面"
                 else -> "裁剪画面"
             },
         )
-        menu.add(0, MENU_MUTE, 3, if (muted) "取消静音" else "静音")
+        menu.add(0, MENU_MUTE, 2, if (muted) "取消静音" else "静音")
         popup.setOnMenuItemClickListener { item ->
             when (item.itemId) {
-                MENU_COLLAPSE -> host.onCollapse(windowId)
                 MENU_FIT -> host.onFitAspect(windowId)
                 MENU_CROP -> host.onCrop(windowId)
                 MENU_MUTE -> host.onToggleMute(windowId)
@@ -219,7 +223,6 @@ class TitleBar @JvmOverloads constructor(
     }
 
     companion object {
-        private const val MENU_COLLAPSE = 1
         private const val MENU_FIT = 2
         private const val MENU_CROP = 3
         private const val MENU_MUTE = 4
