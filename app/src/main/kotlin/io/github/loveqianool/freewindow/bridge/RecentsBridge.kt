@@ -195,10 +195,12 @@ object RecentsBridge {
         context.packageManager.getApplicationInfo(packageName, 0).uid
     }.getOrNull()
 
-    /** Broadcast the current window list to the launcher. No setPackage: the
-     * launcher package is not known on this side yet (it varies by ROM and
-     * by the user's default launcher), and the launcher's receiver is
-     * registered EXPORTED for exactly this broadcast. */
+    /** Broadcast the current window list to the launcher, and only the
+     * launcher: without setPackage every app could listen for this
+     * action and learn which apps the user has windowed. The Recents
+     * hook is hardcoded to com.android.launcher3 elsewhere too, so
+     * restricting delivery to that package loses nothing that works
+     * today — the launcher's EXPORTED receiver still receives it. */
     fun broadcastWindows(context: Context, windows: List<WindowInfo>) {
         val flags = IntArray(windows.size) { i ->
             val w = windows[i]
@@ -211,6 +213,7 @@ object RecentsBridge {
             f
         }
         val intent = Intent(ACTION_WINDOWS_CHANGED).apply {
+            setPackage("com.android.launcher3")
             putExtra(EXTRA_WINDOW_IDS, windows.map { it.windowId }.toIntArray())
             putExtra(EXTRA_PACKAGES, windows.map { it.component?.packageName ?: "" }.toTypedArray())
             putExtra(EXTRA_LABELS, windows.map { it.label }.toTypedArray())

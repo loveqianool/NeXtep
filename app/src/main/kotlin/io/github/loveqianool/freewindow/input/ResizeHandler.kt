@@ -19,8 +19,9 @@ import android.view.WindowManager
  *   is focused (see [setIndicatorVisible]); the mark is a separate child
  *   view, so hiding it never disables the touch area.
  * - While dragging, a bright-cyan (#FF00E5FF) 3dp dashed preview rect is
- *   shown in an independent system window (TYPE_PHONE,
- *   NOT_FOCUSABLE|NOT_TOUCHABLE); the window itself is not resized yet.
+ *   shown in an independent system window (same TYPE_SEARCH_BAR level
+ *   as the window itself, NOT_FOCUSABLE|NOT_TOUCHABLE); the window
+ *   itself is not resized yet.
  *   The preview is clamped to the usable area, and the commit is clamped
  *   again by the host to the same area.
  * - On release the new rect is committed through [Callback.onResizeCommit];

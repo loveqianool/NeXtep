@@ -191,6 +191,9 @@ object WindowManager : WindowHost {
         val rec = windows.remove(id) ?: return
         synchronized(zOrder) { zOrder.remove(id) }
         synchronized(savedRects) { savedRects.remove(id) }
+        // Pending resize posts check windows[id] and bail out, but
+        // without this the entry itself leaked (ids are never reused).
+        pendingContentResize.remove(id)
         // AppOps mute is persistent; if this was the last muted window for the
         // package, restore audio so the app isn't silently muted after close.
         if (rec.isMuted) {
@@ -348,8 +351,14 @@ object WindowManager : WindowHost {
         val app = appContext ?: return
         if (rec.isMaximized) {
             val rect = synchronized(savedRects) { savedRects.remove(id) } ?: defaultRect(app, rec.componentName)
-            applyRect(id, rect)
+            // Bar first, then size: applyRect sizes the VD from the
+            // bar's visibility, so sizing before hiding/showing the
+            // bar sized it to the old height and only the posted
+            // onContentSizeChanged fixed it (a second, wrong-size
+            // re-layout). With the bar already in its final state,
+            // applyRect sizes it correctly the first time.
             rec.view.setMaximized(false)
+            applyRect(id, rect)
             windows[id] = rec.copy(isMaximized = false)
             Log.i(TAG, "restored id=$id rect=$rect")
         } else {
@@ -365,8 +374,9 @@ object WindowManager : WindowHost {
         val app = appContext ?: return
         synchronized(savedRects) { savedRects[id] = currentRect(rec.view) }
         val rect = usableRect(app)
-        applyRect(id, rect)
+        // Same bar-first order as the restore path above.
         rec.view.setMaximized(true)
+        applyRect(id, rect)
         windows[id] = rec.copy(isMaximized = true)
         Log.i(TAG, "maximized id=$id rect=$rect")
     }

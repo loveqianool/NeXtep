@@ -89,9 +89,7 @@ class FreeWindowView @JvmOverloads constructor(
      * Forwards a touch event after [extraDelay] ms, ensuring it is not
      * delivered before any previously queued event. The framework owns
      * [event] (pooled); we forward a copy. That copy is already caller-owned,
-     * so it goes through [TouchForwarder.forwardOwned] — the old path ran it
-     * through [TouchForwarder.forward] as well, which obtained a second copy
-     * on every touch event.
+     * so it goes through [TouchForwarder.forwardOwned] directly.
      */
     /**
      * Resolve the display id at delivery time, not at event time: tapping

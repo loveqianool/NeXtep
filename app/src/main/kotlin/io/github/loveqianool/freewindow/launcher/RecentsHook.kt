@@ -69,6 +69,11 @@ object RecentsHook {
         }
         // The real menu builder on v17 QuickStep (see class KDoc).
         hookAddMenuOption(module, classLoader, "com.android.quickstep.views.TaskMenuView")
+        // Same for the tablet / grid variant: it was only hooked via
+        // the dead addMenuOptions path, so on a WithArrow build the
+        // FreeWindow option never appeared. Safe to add — the hook
+        // logs and returns if the 1-arg method is absent there.
+        hookAddMenuOption(module, classLoader, "com.android.quickstep.views.TaskMenuViewWithArrow")
         // Card injection (2026-11-01): append a fake
         // SingleTask per FreeWindow window to the Recents list, in
         // RecentsView.applyLoadPlan, before the original method runs.

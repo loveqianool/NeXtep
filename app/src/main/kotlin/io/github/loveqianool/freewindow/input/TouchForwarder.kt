@@ -83,30 +83,6 @@ object TouchForwarder {
     }
 
     /**
-     * Stamps [displayId] on a copy of [event] and injects it asynchronously
-     * into the input system. Returns true if the event was accepted.
-     *
-     * The framework owns [event] (pooled); we inject a copy so async dispatch
-     * can't race the pool recycle.
-     */
-    fun forward(event: MotionEvent, displayId: Int): Boolean {
-        val manager = inputManager ?: return false
-        val inject = injectMethod ?: return false
-        val copy = MotionEvent.obtain(event)
-        try {
-            if (!stampDisplayId(copy, displayId)) return false
-            return try {
-                inject.invoke(manager, copy, INJECT_INPUT_EVENT_MODE_ASYNC) as? Boolean ?: false
-            } catch (e: Throwable) {
-                Log.i(TAG, "injectInputEvent failed: ${e.message}")
-                false
-            }
-        } finally {
-            copy.recycle()
-        }
-    }
-
-    /**
      * Routes the event at the target display via reflection.
      */
     private fun stampDisplayId(event: MotionEvent, displayId: Int): Boolean {
