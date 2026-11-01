@@ -81,11 +81,17 @@ object RecentsHook {
                 override fun intercept(chain: XposedInterface.Chain): Any? {
                     val result = chain.proceed()
                     try {
+                        // PROBE, remove after diagnosis: tells whether the
+                        // hooked addMenuOptions runs at all on menu open.
+                        Log.i(TAG, "launcher: addMenuOptions intercepted, args=${chain.args.size}")
                         val menuView = chain.thisObject ?: return result
                         val container = chain.args.getOrNull(0)
                             ?: getField(menuView, "mTaskContainer")
                             ?: getField(menuView, "taskContainer")
-                            ?: return result
+                        if (container == null) {
+                            Log.w(TAG, "launcher: menu container not found")
+                            return result
+                        }
                         appendOption(menuView, container)
                     } catch (e: Throwable) {
                         Log.w(TAG, "launcher: append FreeWindow option failed", e)
@@ -93,7 +99,7 @@ object RecentsHook {
                     return result
                 }
             })
-            Log.i(TAG, "launcher: menu hook installed on $className")
+            Log.i(TAG, "launcher: menu hook installed on $className (${method.parameterTypes.size}-arg)")
             true
         } catch (e: Throwable) {
             Log.w(TAG, "launcher: hook $className failed", e)
@@ -102,7 +108,12 @@ object RecentsHook {
     }
 
     private fun appendOption(menuView: Any, taskContainer: Any) {
-        val context = (menuView as? View)?.context ?: return
+        val menuViewAsView = menuView as? View
+        if (menuViewAsView == null) {
+            Log.w(TAG, "launcher: menu view is not a View")
+            return
+        }
+        val context = menuViewAsView.context
         val task = callMethod(taskContainer, "getTask") ?: run {
             Log.w(TAG, "launcher: TaskIdAttributeContainer.getTask not found")
             return
