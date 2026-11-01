@@ -8,10 +8,38 @@ import java.util.Base64
 // in three places that drifted apart (Gradle 1.2.4/12, module.prop
 // 1.2.5/13, a hardcoded log string v1.2.5), and the installed version
 // is whatever Gradle says — so Gradle owns it, and the other two are
-// generated from it: module.prop by the generateModuleProp task below,
-// the log line by BuildConfig (generated from defaultConfig).
+// generated from it: module.prop by the write below, the log line by
+// BuildConfig (generated from defaultConfig).
 val appVersionCode = 13
 val appVersionName = "1.2.5"
+
+// module.prop is read by LSPosed/Vector from the APK, but it must match
+// the installed (Gradle) version. Generate it here, at configuration
+// time, from the single source above, so it can never drift again.
+// This is deliberately NOT a task: a task action that reads these
+// script values breaks the configuration cache (CI: "cannot serialize
+// Gradle script object references"), and that is what the first
+// generateModuleProp task did. Configuration-time generation is safe
+// here because the version itself lives in this script, so changing
+// it invalidates the configuration cache and re-runs this write;
+// a cache hit means the version (and the file) are unchanged.
+// The generated file lives in src (that is where AGP packages it
+// from); its content is deterministic, so committing the generated
+// result is harmless.
+file("src/main/resources/META-INF/xposed/module.prop").writeText(
+    """
+    id=nextep
+    name=FreeWindow
+    version=$appVersionName
+    versionCode=$appVersionCode
+    author=loveqianool
+    description=Free windows + per-window mute LSPosed module (Recents-managed)
+    minApiVersion=101
+    targetApiVersion=102
+    staticScope=false
+    exceptionMode=protective
+    """.trimIndent() + "\n",
+)
 
 // Persistent debug keystore: CI runners are ephemeral, so without this every
 // build gets a fresh random debug key and Android refuses to update-install
@@ -24,36 +52,6 @@ if (!debugKeystoreFile.exists()) {
         Base64.getDecoder().decode(file("debug.keystore.b64").readText().trim()),
     )
 }
-
-// module.prop is read by LSPosed/Vector from the APK, but it must match
-// the installed (Gradle) version. Generate it from the single source
-// above on every build, before resources are merged, so it can never
-// drift again. The generated file lives in src (that is where AGP
-// packages it from); its content is deterministic, so committing the
-// generated result is harmless.
-val generateModuleProp = tasks.register("generateModuleProp") {
-    inputs.property("versionName", appVersionName)
-    inputs.property("versionCode", appVersionCode)
-    val propFile = file("src/main/resources/META-INF/xposed/module.prop")
-    outputs.file(propFile)
-    doLast {
-        propFile.writeText(
-            """
-            id=nextep
-            name=FreeWindow
-            version=$appVersionName
-            versionCode=$appVersionCode
-            author=loveqianool
-            description=Free windows + per-window mute LSPosed module (Recents-managed)
-            minApiVersion=101
-            targetApiVersion=102
-            staticScope=false
-            exceptionMode=protective
-            """.trimIndent() + "\n",
-        )
-    }
-}
-tasks.named("preBuild") { dependsOn(generateModuleProp) }
 
 android {
     namespace = "io.github.loveqianool.freewindow"
