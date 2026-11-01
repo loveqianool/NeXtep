@@ -223,8 +223,9 @@ object RecentsHook {
         if (replacedCount == 0) return
         try {
             @Suppress("UNCHECKED_CAST")
-            (tasks as MutableList<Any?>).clear()
-            (tasks as MutableList<Any?>).addAll(replaced)
+            val mutableTasks = tasks as MutableList<Any?>
+            mutableTasks.clear()
+            mutableTasks.addAll(replaced)
         } catch (_: Throwable) {
             try {
                 tasksField.set(state, replaced)
@@ -243,17 +244,17 @@ object RecentsHook {
             val thumbnailClass = Class.forName(
                 "com.android.systemui.shared.recents.model.ThumbnailData", false, loader)
             val ctor = dataClass.getDeclaredConstructor(
-                Int::class.javaPrimitiveType,
+                java.lang.Integer.TYPE,
                 String::class.java,
                 String::class.java,
                 String::class.java,
                 Drawable::class.java,
                 thumbnailClass,
-                Int::class.javaPrimitiveType,
-                Boolean::class.javaPrimitiveType,
-                Boolean::class.javaPrimitiveType,
+                java.lang.Integer.TYPE,
+                java.lang.Boolean.TYPE,
+                java.lang.Boolean.TYPE,
                 java.time.Duration::class.java,
-                Boolean::class.javaPrimitiveType,
+                java.lang.Boolean.TYPE,
             )
             ctor.isAccessible = true
             val title = getField(fakeTask, "title") as? String ?: ""
