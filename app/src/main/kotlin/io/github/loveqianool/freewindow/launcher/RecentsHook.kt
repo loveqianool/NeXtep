@@ -25,11 +25,11 @@ import io.github.loveqianool.freewindow.notification.RecentsBridge
  * built per item: TaskMenuView.addMenuOption is called once per
  * built-in item ("应用信息 / 分屏" etc.), while the batch
  * addMenuOptions is dead code that is never called on menu open
- * (proven by device probe, 2026-11-01). This hook therefore appends
+ * (proven on device, 2026-11-01). This hook therefore appends
  * the FreeWindow option from addMenuOption, moving it to the end on
  * each subsequent item so it lands last. Card injection for FreeWindow
- * windows is a later step, via the system_server recent-task list,
- * not via GroupTask.
+ * windows is launcher-side, in RecentsView.applyLoadPlan, not via
+ * GroupTask and not via the system_server recent-task list.
  *
  * Everything Launcher-side is reflection-only: Launcher3 classes are not
  * on this module's compile classpath, so every class, method, field and
@@ -68,80 +68,18 @@ object RecentsHook {
         }
         // The real menu builder on v17 QuickStep (see class KDoc).
         hookAddMenuOption(module, classLoader, "com.android.quickstep.views.TaskMenuView")
-        // TEMPORARY PROBE3 (remove after card diagnosis, 2026-11-01):
-        // ATMS.getRecentTasks is hooked and correct but never called, so
-        // the launcher must load its Recents task list another way. Probe
-        // everything the launcher-side injection will need, in one build:
-        // method tables for the task-list classes, plus logging-only hooks
-        // for the task query / click / swipe entry points, so the next
-        // implementation does not need another probe round.
-        installProbe3(module, classLoader)
-        // TEMPORARY PROBE4 (remove with PROBE3, 2026-11-01): PROBE3
-        // settled the injection point — RecentsView.applyLoadPlan(List,
-        // int) — but not how to build a fake Task for it. Probe the
-        // Task object itself: TaskView.bind's Task type, the
-        // RecentTasksList holder, and the Task / TaskKey constructors
-        // and fields, plus the applyLoadPlan argument values.
-        installProbe4(module, classLoader)
-        // TEMPORARY PROBE5 (remove with PROBE3, 2026-11-01): PROBE4
-        // showed TaskView.bind takes a SingleTask, not a Task, and
-        // createTaskContainer takes the shared-recents Task. The list
-        // applyLoadPlan receives is therefore a list of SingleTask /
-        // GroupTask wrappers, and a fake card needs a fake SingleTask.
-        // Probe SingleTask and GroupTask construction only; the Task /
-        // TaskKey tables are already in PROBE4's dump.
-        installProbe5(module, classLoader)
-        // TEMPORARY PROBE6 (remove with PROBE3, 2026-11-01): PROBE5
-        // settled SingleTask construction — SingleTask(Task) — but
-        // the shared-recents Task class cannot be dumped at install
-        // time (stub / NOT FOUND). Dump it at runtime instead, from
-        // a real Task instance taken out of the applyLoadPlan list,
-        // where the real class is actually loaded. Logging-only.
-        installProbe6(module, classLoader)
-        // Card injection (2026-11-01, PROBE6-complete): append a fake
+        // Card injection (2026-11-01): append a fake
         // SingleTask per FreeWindow window to the Recents list, in
         // RecentsView.applyLoadPlan, before the original method runs.
         // The window list comes from SystemUI's WINDOWS_CHANGED
-        // broadcast (same protocol as the system_server cache); fake
+        // broadcast; fake
         // ids are 900000+windowId, so a tap / swipe on a fake card
         // reaches the system_server startActivityFromRecents /
         // removeTask interception, which forwards RECENTS_RESTORE /
         // RECENTS_CLOSE to SystemUI. See the function KDoc for the
         // safety rules that keep real Recents intact.
         installCardInjection(module, classLoader)
-        // TEMPORARY PROBE7 (remove with PROBE3, 2026-11-01): fake
-        // cards inject (recents-cards injected N) but render with no
-        // title and no content on device. The list injection works;
-        // the display does not. TaskView's tile state is loaded
-        // asynchronously (TaskTileUiState, via a TasksRepository keyed
-        // by task id), and a fake id has no system task to load from,
-        // so the async load likely overwrites the fake Task's title /
-        // icon / thumbnail with empty state. Probe the tile-state
-        // classes and log what state a fake card actually receives.
-        installProbe7(module, classLoader)
-        // TEMPORARY PROBE8 (remove with PROBE3, 2026-11-01): PROBE7
-        // showed fake cards DO receive a TaskTileUiState (same field
-        // types as real cards), so the callback is not missing — the
-        // state's CONTENT must be empty. PROBE7 only logged field
-        // types, not values, so it cannot tell an empty tasks list
-        // from a full one. Log the values: hasHeader / isCentralTask,
-        // tasks list size, and each tile element's title / icon /
-        // thumbnail presence, plus the TaskView's own Task title at
-        // that moment, to see whether the fake Task's title survived
-        // or was cleared before the tile state was built.
-        installProbe8(module, classLoader)
-        // TEMPORARY PROBE9 (remove with PROBE3, 2026-11-01): PROBE8
-        // settled it — the fake card's own Task is correct
-        // (title 'Haven (自由窗口)', icon present), but its tile
-        // state element is TaskData$NoData with only a taskId, so
-        // the tile loader found no system task for the fake id and
-        // gave up. The fix is to replace that NoData element with
-        // a Data element built from the fake Task, which needs the
-        // Data class's full name, fields and constructors. Log them
-        // from a runtime NoData element's classloader, plus the Data
-        // class if it can be loaded from the same package.
-        installProbe9(module, classLoader)
-        // Fake-card tile fix (PROBE9 gave the Data shape, 2026-11-01):
+        // Fake-card tile fix (Data shape proven on device, 2026-11-01):
         // on TaskView.updateTaskViewState, before the original
         // method renders, replace each fake NoData tile element with
         // a Data element built from the card's own fake Task
@@ -150,8 +88,7 @@ object RecentsHook {
         // cards are untouched (taskId < CARD_FAKE_BASE returns
         // early), and any failure leaves the original state in
         // place, so this can only leave a card blank, never break
-        // Recents. Registered after the probes, so PROBE8/PROBE9
-        // logs show the replaced state and verify the fix.
+        // Recents.
         installFakeCardTileFix(module, classLoader)
     }
 
@@ -303,278 +240,7 @@ object RecentsHook {
         }.getOrNull() ?: ""
     }
 
-    /**
-     * TEMPORARY PROBE9, launcher side. Logging-only: on
-     * TaskView.updateTaskViewState, for fake cards, log the tile
-     * element's full class name, its classloader, and the Data
-     * sibling class's methods, constructors and fields, so the fix
-     * can construct a Data element without guessing its shape.
-     */
-    private fun installProbe9(module: XposedModule, cl: ClassLoader) {
-        try {
-            val taskViewClass = cl.loadClass("com.android.quickstep.views.TaskView")
-            for (method in taskViewClass.declaredMethods) {
-                if (!method.name.startsWith("updateTaskViewState")) continue
-                method.isAccessible = true
-                module.hook(method).intercept(object : XposedInterface.Hooker {
-                    override fun intercept(chain: XposedInterface.Chain): Any? {
-                        val result = chain.proceed()
-                        try {
-                            val state = chain.args.getOrNull(0) ?: return result
-                            val taskView = chain.thisObject
-                            val firstTask = runCatching {
-                                val m = taskView?.javaClass?.methods?.firstOrNull {
-                                    it.name == "getFirstTask" && it.parameterTypes.isEmpty()
-                                }
-                                m?.isAccessible = true
-                                m?.invoke(taskView)
-                            }.getOrNull()
-                            val taskId = runCatching {
-                                val key = getField(firstTask, "key")
-                                getField(key, "id") as? Int
-                            }.getOrNull()
-                            if (taskId == null || taskId < CARD_FAKE_BASE) return result
-                            val tasksField = state.javaClass.declaredFields.firstOrNull {
-                                it.name == "tasks"
-                            } ?: return result
-                            tasksField.isAccessible = true
-                            val tasks = tasksField.get(state) as? List<*> ?: return result
-                            val firstElem = tasks.firstOrNull() ?: return result
-                            val elemClass = firstElem.javaClass
-                            Log.i(
-                                TAG,
-                                "launcher: PROBE9 tile element class=${elemClass.name} " +
-                                    "loader=${elemClass.classLoader?.javaClass?.simpleName}",
-                            )
-                            // Sibling Data class: same outer class as
-                            // NoData, with 'Data' as the nested name.
-                            val outerName = elemClass.name.substringBeforeLast('$')
-                            val dataNames = listOf(
-                                "$outerName\$Data",
-                                "${elemClass.name.substringBefore("NoData")}Data",
-                            ).distinct()
-                            for (dataName in dataNames) {
-                                try {
-                                    val dataClass = Class.forName(
-                                        dataName, false, elemClass.classLoader)
-                                    for (m in dataClass.declaredMethods) {
-                                        Log.i(
-                                            TAG,
-                                            "launcher: PROBE9 dump $dataName method ${m.name}(" +
-                                                m.parameterTypes.joinToString { it.name } +
-                                                "):${m.returnType.name}",
-                                        )
-                                    }
-                                    for (ctor in dataClass.declaredConstructors) {
-                                        Log.i(
-                                            TAG,
-                                            "launcher: PROBE9 dump $dataName ctor(" +
-                                                ctor.parameterTypes.joinToString { it.name } + ")",
-                                        )
-                                    }
-                                    for (field in dataClass.declaredFields) {
-                                        Log.i(
-                                            TAG,
-                                            "launcher: PROBE9 dump $dataName field " +
-                                                "${field.name}:${field.type.name}",
-                                        )
-                                    }
-                                } catch (e: Throwable) {
-                                    Log.w(TAG, "launcher: PROBE9 dump $dataName NOT FOUND")
-                                }
-                            }
-                            // Also dump the NoData class itself, so its
-                            // taskId field name is confirmed for the fix.
-                            for (field in elemClass.declaredFields) {
-                                Log.i(
-                                    TAG,
-                                    "launcher: PROBE9 dump ${elemClass.name} field " +
-                                        "${field.name}:${field.type.name}",
-                                )
-                            }
-                        } catch (_: Throwable) {
-                        }
-                        return result
-                    }
-                })
-            }
-            Log.i(TAG, "launcher: PROBE9 hook installed on TaskView.updateTaskViewState")
-        } catch (e: Throwable) {
-            Log.w(TAG, "launcher: PROBE9 install failed", e)
-        }
-    }
-
-    /**
-     * TEMPORARY PROBE8, launcher side. Logging-only, same rules as
-     * PROBE7: hook TaskView.updateTaskViewState, proceed, then log
-     * the tile state's values (not just its field types). Bitmaps
-     * are never logged by content, only by presence and size.
-     */
-    private fun installProbe8(module: XposedModule, cl: ClassLoader) {
-        try {
-            val taskViewClass = cl.loadClass("com.android.quickstep.views.TaskView")
-            for (method in taskViewClass.declaredMethods) {
-                if (!method.name.startsWith("updateTaskViewState")) continue
-                method.isAccessible = true
-                module.hook(method).intercept(object : XposedInterface.Hooker {
-                    override fun intercept(chain: XposedInterface.Chain): Any? {
-                        val result = chain.proceed()
-                        try {
-                            val state = chain.args.getOrNull(0) ?: return result
-                            val taskView = chain.thisObject
-                            val firstTask = runCatching {
-                                val m = taskView?.javaClass?.methods?.firstOrNull {
-                                    it.name == "getFirstTask" && it.parameterTypes.isEmpty()
-                                }
-                                m?.isAccessible = true
-                                m?.invoke(taskView)
-                            }.getOrNull()
-                            val taskId = runCatching {
-                                val key = getField(firstTask, "key")
-                                getField(key, "id") as? Int
-                            }.getOrNull()
-                            val isFake = taskId != null && taskId >= CARD_FAKE_BASE
-                            // Only fake cards and one real card per
-                            // Recents open are worth logging in full;
-                            // real cards otherwise spam the log.
-                            if (!isFake && taskId != null && taskId % 10 != 0) return result
-                            val taskTitle = runCatching {
-                                getField(firstTask, "title") as? String
-                            }.getOrNull()
-                            val taskIconNull = runCatching {
-                                getField(firstTask, "icon") == null
-                            }.getOrNull()
-                            val sb = StringBuilder()
-                            for (field in state.javaClass.declaredFields) {
-                                try {
-                                    field.isAccessible = true
-                                    val v = field.get(state)
-                                    when {
-                                        v == null -> sb.append("${field.name}=null;")
-                                        v is Boolean -> sb.append("${field.name}=$v;")
-                                        v is Int -> sb.append("${field.name}=$v;")
-                                        v is List<*> -> {
-                                            sb.append("${field.name}=List size=${v.size};")
-                                            for ((i, elem) in v.withIndex()) {
-                                                if (elem == null) {
-                                                    sb.append("  [$i]=null;")
-                                                    continue
-                                                }
-                                                sb.append("  [$i]${elem.javaClass.simpleName}:")
-                                                for (ef in elem.javaClass.declaredFields) {
-                                                    try {
-                                                        ef.isAccessible = true
-                                                        val ev = ef.get(elem)
-                                                        sb.append(when {
-                                                            ev == null -> "${ef.name}=null,"
-                                                            ev is String -> "${ef.name}='${ev.take(40)}',"
-                                                            ev is Int -> "${ef.name}=$ev,"
-                                                            ev is Boolean -> "${ef.name}=$ev,"
-                                                            ev is android.graphics.Bitmap -> "${ef.name}=Bitmap ${ev.width}x${ev.height},"
-                                                            else -> "${ef.name}=${ev.javaClass.simpleName},"
-                                                        })
-                                                    } catch (_: Throwable) {
-                                                    }
-                                                }
-                                                sb.append(";")
-                                            }
-                                        }
-                                        else -> sb.append("${field.name}=${v.javaClass.simpleName};")
-                                    }
-                                } catch (_: Throwable) {
-                                }
-                            }
-                            Log.i(
-                                TAG,
-                                "launcher: PROBE8 updateTaskViewState taskId=$taskId isFake=$isFake " +
-                                    "taskTitle='${taskTitle?.take(40)}' taskIconNull=$taskIconNull state=[$sb]",
-                            )
-                        } catch (_: Throwable) {
-                        }
-                        return result
-                    }
-                })
-            }
-            Log.i(TAG, "launcher: PROBE8 hook installed on TaskView.updateTaskViewState")
-        } catch (e: Throwable) {
-            Log.w(TAG, "launcher: PROBE8 install failed", e)
-        }
-    }
-
-    /**
-     * TEMPORARY PROBE7, launcher side. Logging-only: dump the tile
-     * state classes, and log the tile state TaskView receives, so a
-     * fake card's empty title / content can be traced to the loader
-     * that clears it, instead of guessed at.
-     */
-    private fun installProbe7(module: XposedModule, cl: ClassLoader) {
-        try {
-            dumpProbeClass(cl, "PROBE7",
-                "com.android.quickstep.recents.ui.viewmodel.TaskTileUiState")
-            dumpProbeClass(cl, "PROBE7",
-                "com.android.quickstep.recents.data.TasksRepository")
-            dumpProbeClass(cl, "PROBE7",
-                "com.android.quickstep.util.TasksRepository")
-            // TaskView.updateTaskViewState is the point where async
-            // tile state reaches the card UI. Log the state for every
-            // card, and flag fake ids (900000+) explicitly, so a fake
-            // card's empty state stands out from real cards' states.
-            try {
-                val taskViewClass = cl.loadClass("com.android.quickstep.views.TaskView")
-                for (method in taskViewClass.declaredMethods) {
-                    if (method.name != "updateTaskViewState" &&
-                        !method.name.startsWith("updateTaskViewState")) continue
-                    method.isAccessible = true
-                    module.hook(method).intercept(object : XposedInterface.Hooker {
-                        override fun intercept(chain: XposedInterface.Chain): Any? {
-                            val result = chain.proceed()
-                            try {
-                                val state = chain.args.getOrNull(0)
-                                val taskView = chain.thisObject
-                                val firstTask = runCatching {
-                                    val m = taskView?.javaClass?.methods?.firstOrNull {
-                                        it.name == "getFirstTask" && it.parameterTypes.isEmpty()
-                                    }
-                                    m?.isAccessible = true
-                                    m?.invoke(taskView)
-                                }.getOrNull()
-                                val taskId = runCatching {
-                                    val key = getField(firstTask, "key")
-                                    getField(key, "id") as? Int
-                                }.getOrNull()
-                                val stateDesc = if (state == null) {
-                                    "null"
-                                } else {
-                                    val fields = state.javaClass.declaredFields.mapNotNull { f ->
-                                        runCatching {
-                                            f.isAccessible = true
-                                            val v = f.get(state)
-                                            "${f.name}=${if (v == null) "null" else v.javaClass.simpleName}"
-                                        }.getOrNull()
-                                    }.joinToString()
-                                    "${state.javaClass.simpleName}[$fields]"
-                                }
-                                Log.i(
-                                    TAG,
-                                    "launcher: PROBE7 updateTaskViewState taskId=$taskId " +
-                                        "isFake=${taskId != null && taskId >= CARD_FAKE_BASE} state=$stateDesc",
-                                )
-                            } catch (_: Throwable) {
-                            }
-                            return result
-                        }
-                    })
-                }
-            } catch (e: Throwable) {
-                Log.w(TAG, "launcher: PROBE7 hook updateTaskViewState failed", e)
-            }
-        } catch (e: Throwable) {
-            Log.w(TAG, "launcher: PROBE7 install failed", e)
-        }
-    }
-
-    // ------------------------------------------------------------------
-    // Recents card injection (launcher side, PROBE6-complete).
+    // Recents card injection (launcher side).
     // ------------------------------------------------------------------
 
     private const val CARD_FAKE_BASE = 900000
@@ -594,17 +260,17 @@ object RecentsHook {
      *   because of a fake card.
      * - Fake ids are 900000+windowId (window ids 1..8), far above real
      *   task ids, and a fake id already in the list is never duplicated.
-     * - The original list is an ArrayList (PROBE6), so fakes are added
+     * - The original list is an ArrayList, so fakes are added
      *   in place; if a future build hands an unmodifiable list, the
      *   hook falls back to a copy and replaces the argument.
      * - A window without a launch intent is skipped, not faked with a
-     *   broken component (same rule as the system_server fake tasks).
+     *   broken component.
      * - Fake cards carry a " (自由窗口)" title suffix, so a windowized
      *   app does not show two identical cards (its real main-display
      *   task stays in Recents alongside the fake FreeWindow card).
      * - The load identifier (applyLoadPlan's int argument) is left
      *   untouched; only the list is modified.
-     * - The cache is async, like the system_server one: a window
+     * - The cache is async: a window
      *   change broadcasts WINDOWS_CHANGED, and the next Recents open
      *   after that shows the fake card. The first Recents open after
      *   a launcher restart may miss fakes, because the REQUEST_WINDOWS
@@ -737,7 +403,7 @@ object RecentsHook {
             }
         val component = launchIntent.component ?: return null
         // Task / TaskKey classes must come from a runtime instance when
-        // one exists (install-time loadClass hits the stub, PROBE4);
+        // one exists (install-time loadClass hits the stub);
         // at Recents-open time the real classes are loaded, so the
         // fallback loadClass below also works then.
         val taskClass: Class<*> = templateTask?.javaClass
@@ -895,377 +561,8 @@ object RecentsHook {
     }
 
     /**
-     * TEMPORARY PROBE6, launcher side. Hooks RecentsView.applyLoadPlan
-     * only to inspect its arguments, then proceeds unchanged. No fake
-     * card is injected yet; this probe only learns how a real Task
-     * is built, so the injection can clone one.
-     */
-    private fun installProbe6(module: XposedModule, cl: ClassLoader) {
-        try {
-            val clazz = cl.loadClass("com.android.quickstep.views.RecentsView")
-            val method = clazz.declaredMethods.firstOrNull {
-                it.name == "applyLoadPlan" && it.parameterTypes.size == 2
-            } ?: run {
-                Log.w(TAG, "launcher: PROBE6 applyLoadPlan not found")
-                return
-            }
-            method.isAccessible = true
-            module.hook(method).intercept(object : XposedInterface.Hooker {
-                override fun intercept(chain: XposedInterface.Chain): Any? {
-                    val result = chain.proceed()
-                    try {
-                        val list = chain.args.getOrNull(0) as? List<*>
-                        Log.i(
-                            TAG,
-                            "launcher: PROBE6 applyLoadPlan listClass=${list?.javaClass?.name} " +
-                                "listSize=${list?.size} intArg=${chain.args.getOrNull(1) as? Int}",
-                        )
-                        val first = list?.firstOrNull() ?: return result
-                        Log.i(TAG, "launcher: PROBE6 firstItemClass=${first.javaClass.name}")
-                        // SingleTask.getTask() is the real Task object;
-                        // its class is the runtime Task class, not the
-                        // install-time stub that PROBE4 could not dump.
-                        val getTask = first.javaClass.methods.firstOrNull {
-                            it.name == "getTask" && it.parameterTypes.isEmpty()
-                        } ?: run {
-                            Log.w(TAG, "launcher: PROBE6 first item has no getTask()")
-                            return result
-                        }
-                        getTask.isAccessible = true
-                        val task = getTask.invoke(first) ?: return result
-                        val taskClass = task.javaClass
-                        Log.i(TAG, "launcher: PROBE6 taskClass=${taskClass.name}")
-                        for (m in taskClass.declaredMethods) {
-                            Log.i(
-                                TAG,
-                                "launcher: PROBE6 dump task method ${m.name}(" +
-                                    m.parameterTypes.joinToString { it.name } + "):${m.returnType.name}",
-                            )
-                        }
-                        for (ctor in taskClass.declaredConstructors) {
-                            Log.i(
-                                TAG,
-                                "launcher: PROBE6 dump task ctor(" +
-                                    ctor.parameterTypes.joinToString { it.name } + ")",
-                            )
-                        }
-                        for (field in taskClass.declaredFields) {
-                            Log.i(
-                                TAG,
-                                "launcher: PROBE6 dump task field ${field.name}:${field.type.name}",
-                            )
-                        }
-                        // TaskKey is the task's identity (id, component,
-                        // baseIntent). Its class comes from the task's
-                        // key field, again at runtime, not install time.
-                        var keyClass: Class<*>? = null
-                        for (field in taskClass.declaredFields) {
-                            if (field.name == "key") {
-                                keyClass = field.type
-                                break
-                            }
-                        }
-                        if (keyClass != null) {
-                            for (m in keyClass.declaredMethods) {
-                                Log.i(
-                                    TAG,
-                                    "launcher: PROBE6 dump key method ${m.name}(" +
-                                        m.parameterTypes.joinToString { it.name } + "):${m.returnType.name}",
-                                )
-                            }
-                            for (ctor in keyClass.declaredConstructors) {
-                                Log.i(
-                                    TAG,
-                                    "launcher: PROBE6 dump key ctor(" +
-                                        ctor.parameterTypes.joinToString { it.name } + ")",
-                                )
-                            }
-                            for (field in keyClass.declaredFields) {
-                                Log.i(
-                                    TAG,
-                                    "launcher: PROBE6 dump key field ${field.name}:${field.type.name}",
-                                )
-                            }
-                        } else {
-                            Log.w(TAG, "launcher: PROBE6 task has no key field")
-                        }
-                    } catch (e: Throwable) {
-                        Log.w(TAG, "launcher: PROBE6 inspect failed", e)
-                    }
-                    return result
-                }
-            })
-            Log.i(TAG, "launcher: PROBE6 hook installed on RecentsView.applyLoadPlan")
-        } catch (e: Throwable) {
-            Log.w(TAG, "launcher: PROBE6 install failed", e)
-        }
-    }
-
-    /**
-     * TEMPORARY PROBE5, launcher side. Logging-only, same rules as
-     * PROBE3/PROBE4: dump tables only, no hooks, no behaviour change.
-     */
-    private fun installProbe5(module: XposedModule, cl: ClassLoader) {
-        try {
-            dumpProbeClass(cl, "PROBE5", "com.android.quickstep.util.SingleTask")
-            dumpProbeClass(cl, "PROBE5", "com.android.quickstep.util.GroupTask")
-        } catch (e: Throwable) {
-            Log.w(TAG, "launcher: PROBE5 install failed", e)
-        }
-    }
-
-    /**
-     * TEMPORARY PROBE4, launcher side. Logging-only, same rules as
-     * PROBE3: proceed first, log, return the original result unchanged.
-     */
-    private fun installProbe4(module: XposedModule, cl: ClassLoader) {
-        try {
-            // TaskView.bind's parameter type is the Task class name;
-            // its mTask field type says the same thing. RecentTasksList
-            // is where RecentsModel keeps its task list (field taskList).
-            dumpProbeClass(cl, "PROBE4", "com.android.quickstep.views.TaskView")
-            dumpProbeClass(cl, "PROBE4", "com.android.quickstep.RecentTasksList")
-            // Candidate Task / TaskKey classes from the shared recents
-            // library; NOT FOUND here just means TaskView.bind's type
-            // (above) is the real one to dump next.
-            dumpProbeClass(cl, "PROBE4", "com.android.systemui.shared.recents.model.Task")
-            dumpProbeClass(cl, "PROBE4", "com.android.systemui.shared.recents.model.TaskKey")
-            // applyLoadPlan(List, int): log the list size and the int
-            // argument value (display id? running task id? load id?).
-            hookProbe4ApplyLoadPlan(module, cl)
-            // RecentsModel.getTasks(Consumer) returns an Integer; log
-            // its value, not just its class name, to tell a task count
-            // apart from a load identifier.
-            hookProbe4GetTasks(module, cl)
-        } catch (e: Throwable) {
-            Log.w(TAG, "launcher: PROBE4 install failed", e)
-        }
-    }
-
-    private fun dumpProbeClass(cl: ClassLoader, tag: String, className: String) {
-        try {
-            val clazz = cl.loadClass(className)
-            for (method in clazz.declaredMethods) {
-                Log.i(
-                    TAG,
-                    "launcher: $tag dump $className method ${method.name}(" +
-                        method.parameterTypes.joinToString { it.name } + "):${method.returnType.name}",
-                )
-            }
-            // Constructors matter here: a fake Task must be built, and
-            // its constructor signature is the only way to build one.
-            for (ctor in clazz.declaredConstructors) {
-                Log.i(
-                    TAG,
-                    "launcher: $tag dump $className ctor(" +
-                        ctor.parameterTypes.joinToString { it.name } + ")",
-                )
-            }
-            for (field in clazz.declaredFields) {
-                Log.i(
-                    TAG,
-                    "launcher: $tag dump $className field ${field.name}:${field.type.name}",
-                )
-            }
-        } catch (e: Throwable) {
-            Log.w(TAG, "launcher: $tag dump $className NOT FOUND")
-        }
-    }
-
-    private fun hookProbe4ApplyLoadPlan(module: XposedModule, cl: ClassLoader) {
-        try {
-            val clazz = cl.loadClass("com.android.quickstep.views.RecentsView")
-            val method = clazz.declaredMethods.firstOrNull {
-                it.name == "applyLoadPlan" && it.parameterTypes.size == 2
-            } ?: run {
-                Log.w(TAG, "launcher: PROBE4 applyLoadPlan not found")
-                return
-            }
-            method.isAccessible = true
-            module.hook(method).intercept(object : XposedInterface.Hooker {
-                override fun intercept(chain: XposedInterface.Chain): Any? {
-                    val result = chain.proceed()
-                    try {
-                        val listSize = (chain.args.getOrNull(0) as? List<*>)?.size
-                        val intArg = chain.args.getOrNull(1) as? Int
-                        Log.i(
-                            TAG,
-                            "launcher: PROBE4 applyLoadPlan listSize=$listSize intArg=$intArg",
-                        )
-                    } catch (_: Throwable) {
-                    }
-                    return result
-                }
-            })
-        } catch (e: Throwable) {
-            Log.w(TAG, "launcher: PROBE4 hook applyLoadPlan failed", e)
-        }
-    }
-
-    private fun hookProbe4GetTasks(module: XposedModule, cl: ClassLoader) {
-        try {
-            val clazz = cl.loadClass("com.android.quickstep.RecentsModel")
-            var matched = 0
-            for (method in clazz.declaredMethods) {
-                if (method.name != "getTasks") continue
-                matched++
-                method.isAccessible = true
-                module.hook(method).intercept(object : XposedInterface.Hooker {
-                    override fun intercept(chain: XposedInterface.Chain): Any? {
-                        val result = chain.proceed()
-                        try {
-                            val argTypes = chain.args.joinToString {
-                                it?.javaClass?.simpleName ?: "null"
-                            }
-                            val resultDesc = when (result) {
-                                is Int -> "Int=$result"
-                                is List<*> -> "List size=${result.size}"
-                                else -> result?.javaClass?.simpleName ?: "null"
-                            }
-                            Log.i(
-                                TAG,
-                                "launcher: PROBE4 RecentsModel.getTasks args=[$argTypes] result=$resultDesc",
-                            )
-                        } catch (_: Throwable) {
-                        }
-                        return result
-                    }
-                })
-            }
-            if (matched == 0) Log.w(TAG, "launcher: PROBE4 hook RecentsModel.getTasks no matching methods")
-        } catch (e: Throwable) {
-            Log.w(TAG, "launcher: PROBE4 hook getTasks failed", e)
-        }
-    }
-
-    /**
-     * TEMPORARY PROBE3, launcher side. All hooks here are logging-only:
-     * proceed first, log, return the original result unchanged. Any
-     * failure logs and skips just that method; the launcher never
-     * crashes because of this probe.
-     */
-    private fun installProbe3(module: XposedModule, cl: ClassLoader) {
-        try {
-            // 1. Method + field tables: what task-list classes exist, what
-            // task methods they declare, and where the task list lives.
-            // Full parameter type names (not just simple names) so the
-            // next probe can load the LoadPlan class by its real name.
-            dumpProbe3Class(cl, "com.android.quickstep.RecentsModel")
-            dumpProbe3Class(cl, "com.android.quickstep.views.RecentsView")
-            dumpProbe3Class(cl, "com.android.quickstep.views.RecentsView\$LoadPlan")
-            dumpProbe3Class(cl, "com.android.quickstep.RecentsModel\$LoadPlan")
-            // 2. Client-side task query / click / swipe entry points.
-            // ActivityTaskManager is the newer client wrapper; the older
-            // ActivityManager wrapper may not even exist on this build.
-            hookProbe3ByName(module, "android.app.ActivityManager") { name ->
-                name == "getRecentTasks" || name == "startActivityFromRecents" || name == "removeTask"
-            }
-            hookProbe3ByName(module, "android.app.ActivityTaskManager") { name ->
-                name == "getTasks" || name == "getRecentTasks"
-            }
-            // 3. Data-layer task methods: load / change / remove tasks.
-            hookProbe3Class(module, cl, "com.android.quickstep.RecentsModel") { name ->
-                "Task" in name
-            }
-            // 4. UI-layer task-list methods (plural Tasks, to avoid the
-            // per-card getTaskView spam of the singular form).
-            hookProbe3Class(module, cl, "com.android.quickstep.views.RecentsView") { name ->
-                "Tasks" in name || "LoadPlan" in name
-            }
-            // 5. Card click / dismiss handlers, for later fake-card taps.
-            // PROBE3 fix: the old "launch" substring matched the synthetic
-            // shouldShowSplash$...Launcher3... name and spammed the log.
-            // Only methods starting with launch, plus dismissTask, are
-            // real card actions; dismiss-button UI methods are excluded.
-            hookProbe3Class(module, cl, "com.android.quickstep.views.TaskView") { name ->
-                val lower = name.lowercase()
-                lower.startsWith("launch") || "dismisstask" in lower
-            }
-        } catch (e: Throwable) {
-            Log.w(TAG, "launcher: PROBE3 install failed", e)
-        }
-    }
-
-    private fun dumpProbe3Class(cl: ClassLoader, className: String) {
-        try {
-            val clazz = cl.loadClass(className)
-            for (method in clazz.declaredMethods) {
-                Log.i(
-                    TAG,
-                    "launcher: PROBE3 dump $className method ${method.name}(" +
-                        method.parameterTypes.joinToString { it.name } + ")",
-                )
-            }
-            for (field in clazz.declaredFields) {
-                Log.i(
-                    TAG,
-                    "launcher: PROBE3 dump $className field ${field.name}:${field.type.name}",
-                )
-            }
-        } catch (e: Throwable) {
-            Log.w(TAG, "launcher: PROBE3 dump $className NOT FOUND")
-        }
-    }
-
-    private fun hookProbe3ByName(module: XposedModule, className: String, match: (String) -> Boolean) {
-        try {
-            val clazz = Class.forName(className)
-            var matched = 0
-            for (method in clazz.declaredMethods) {
-                if (!match(method.name)) continue
-                matched++
-                hookProbe3Method(module, "PROBE3 $className.${method.name}", method)
-            }
-            if (matched == 0) Log.w(TAG, "launcher: PROBE3 hook $className no matching methods")
-        } catch (e: Throwable) {
-            Log.w(TAG, "launcher: PROBE3 hook $className failed", e)
-        }
-    }
-
-    private fun hookProbe3Class(module: XposedModule, cl: ClassLoader, className: String, match: (String) -> Boolean) {
-        try {
-            val clazz = cl.loadClass(className)
-            var matched = 0
-            for (method in clazz.declaredMethods) {
-                if (!match(method.name)) continue
-                matched++
-                hookProbe3Method(module, "PROBE3 $className.${method.name}", method)
-            }
-            if (matched == 0) Log.w(TAG, "launcher: PROBE3 hook $className no matching methods")
-        } catch (e: Throwable) {
-            Log.w(TAG, "launcher: PROBE3 hook $className failed", e)
-        }
-    }
-
-    private fun hookProbe3Method(module: XposedModule, label: String, method: java.lang.reflect.Method) {
-        try {
-            method.isAccessible = true
-            module.hook(method).intercept(object : XposedInterface.Hooker {
-                override fun intercept(chain: XposedInterface.Chain): Any? {
-                    val result = chain.proceed()
-                    try {
-                        val size = (result as? List<*>)?.size
-                        val firstInt = chain.args.getOrNull(0) as? Int
-                        Log.i(
-                            TAG,
-                            "launcher: $label called args=${chain.args.size} " +
-                                (if (firstInt != null) "firstInt=$firstInt " else "") +
-                                (if (size != null) "resultSize=$size" else "result=${result?.javaClass?.simpleName}"),
-                        )
-                    } catch (_: Throwable) {
-                        // Logging must never change the result.
-                    }
-                    return result
-                }
-            })
-        } catch (e: Throwable) {
-            Log.w(TAG, "launcher: PROBE3 hook $label failed", e)
-        }
-    }
-
-    /**
      * Hook the per-item builder TaskMenuView.addMenuOption(1 arg).
-     * Device probe (2026-11-01) shows it is called once per built-in
+     * On device (2026-11-01) it is called once per built-in
      * menu item (4 calls per menu open), while addMenuOptions is never
      * called. The task container is not an argument here, so it is
      * resolved from the menu view itself: first the private
@@ -1447,8 +744,8 @@ object RecentsHook {
                 val textId = getRInt("com.android.launcher3.R\$id", "text")
                 // v17 QuickStep: the "icon" view in task_view_menu_option
                 // is a plain View, not an ImageView — a hard cast throws
-                // ClassCastException and kills the whole append (device
-                // probe, 2026-11-01). Safe-cast so a non-ImageView icon
+                // ClassCastException and kills the whole append (seen on
+                // device, 2026-11-01). Safe-cast so a non-ImageView icon
                 // is simply left alone; text is what the user reads.
                 (if (iconId != null) inflated.findViewById<View>(iconId) as? ImageView else null)
                     ?.setImageResource(android.R.drawable.ic_dialog_info)
