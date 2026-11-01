@@ -136,11 +136,24 @@ object RecentsTaskHook {
             Log.w(TAG, "recents-tasks: task manager class not found")
             return
         }
+        // TEMPORARY PROBE2 (remove after card diagnosis, 2026-11-01):
+        // PROBE (appendFakes) never fires even after windowize + Recents
+        // open on the probe build, and installed=true does not prove
+        // getRecentTasks itself was hooked. Log which class was used and
+        // which getRecentTasks overloads were actually found.
+        Log.i(TAG, "recents-tasks: PROBE2 task manager class=${taskManagerClass.name}")
+        var foundRecentTasks = 0
         var hooked = false
         for (method in taskManagerClass.declaredMethods) {
             try {
                 when (method.name) {
                     "getRecentTasks" -> {
+                        foundRecentTasks++
+                        Log.i(
+                            TAG,
+                            "recents-tasks: PROBE2 found getRecentTasks(" +
+                                method.parameterTypes.joinToString { it.simpleName } + ")",
+                        )
                         method.isAccessible = true
                         module.hook(method).intercept(object : XposedInterface.Hooker {
                             override fun intercept(chain: XposedInterface.Chain): Any? {
@@ -202,6 +215,12 @@ object RecentsTaskHook {
             } catch (e: Throwable) {
                 Log.w(TAG, "recents-tasks: hook ${method.name} failed", e)
             }
+        }
+        if (foundRecentTasks == 0) {
+            val recentNames = taskManagerClass.declaredMethods
+                .filter { "Recent" in it.name }
+                .joinToString { it.name + "(" + it.parameterTypes.joinToString { p -> p.simpleName } + ")" }
+            Log.i(TAG, "recents-tasks: PROBE2 getRecentTasks NOT FOUND, recent-named methods: $recentNames")
         }
         Log.i(TAG, "recents-tasks: task manager hooks installed=$hooked")
     }
