@@ -59,6 +59,45 @@ object RecentsHook {
         if (!hooked) {
             Log.w(TAG, "launcher: TaskMenuView.addMenuOptions not found, menu hook skipped")
         }
+        // PROBE, remove after diagnosis: see probeMenuMethods.
+        probeMenuMethods(module, classLoader)
+    }
+
+    /**
+     * PROBE, remove after diagnosis. The v17 QuickStep TaskMenuView has a
+     * 0-arg addMenuOptions that is never called on menu open, so stop
+     * guessing from old source and ask the device: dump every declared
+     * method of TaskMenuView at install, and hook every menu/option
+     * method (except addMenuOptions, already hooked above) with a
+     * logging-only interceptor. Opening the menu once then shows
+     * exactly which method builds it on this build. Logging only,
+     * original behaviour unchanged.
+     */
+    private fun probeMenuMethods(module: XposedModule, cl: ClassLoader) {
+        try {
+            val clazz = cl.loadClass("com.android.quickstep.views.TaskMenuView")
+            for (m in clazz.declaredMethods) {
+                Log.i(TAG, "launcher: probe TaskMenuView method ${m.name}(${m.parameterTypes.size})")
+            }
+            for (m in clazz.declaredMethods) {
+                if (m.name == "addMenuOptions") continue
+                val lower = m.name.lowercase()
+                if (!lower.contains("menu") && !lower.contains("option")) continue
+                try {
+                    m.isAccessible = true
+                    module.hook(m).intercept(object : XposedInterface.Hooker {
+                        override fun intercept(chain: XposedInterface.Chain): Any? {
+                            Log.i(TAG, "launcher: probe ${m.name}(${m.parameterTypes.size}) called")
+                            return chain.proceed()
+                        }
+                    })
+                } catch (e: Throwable) {
+                    Log.w(TAG, "launcher: probe hook ${m.name} failed", e)
+                }
+            }
+        } catch (e: Throwable) {
+            Log.w(TAG, "launcher: probe TaskMenuView methods failed", e)
+        }
     }
 
     private fun hookMenu(module: XposedModule, cl: ClassLoader, className: String): Boolean {
