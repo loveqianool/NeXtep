@@ -531,18 +531,23 @@ object RecentsHook {
                         // without a check any app could forge a
                         // WINDOWS_CHANGED broadcast and plant fake
                         // cards (title and icon of its choosing) in
-                        // Recents. Only SystemUI may send this. See
-                        // RecentsBridge for the SystemUI-side check.
-                        val senderUid = RecentsBridge.sendingUidOf(this)
-                        if (senderUid != null) {
-                            val systemUiUid = runCatching {
-                                context.packageManager
-                                    .getApplicationInfo("com.android.systemui", 0).uid
-                            }.getOrNull()
-                            if (systemUiUid != null && senderUid != systemUiUid) {
-                                Log.w(TAG, "launcher: recents-cards dropped WINDOWS_CHANGED from uid=$senderUid")
-                                return
-                            }
+                        // Recents. Only SystemUI may send this. Fail
+                        // CLOSED: an unknown sender (INVALID_UID, i.e.
+                        // identity not shared) or a uid lookup failure
+                        // is dropped, never accepted. The real API is
+                        // getSentFromUid() (34+); a previous build
+                        // checked a non-existent getSendingUid() and
+                        // never actually filtered anything.
+                        val senderUid = getSentFromUid()
+                        val systemUiUid = runCatching {
+                            context.packageManager
+                                .getApplicationInfo("com.android.systemui", 0).uid
+                        }.getOrNull()
+                        if (senderUid == android.os.Process.INVALID_UID ||
+                            systemUiUid == null || senderUid != systemUiUid
+                        ) {
+                            Log.w(TAG, "launcher: recents-cards dropped WINDOWS_CHANGED from uid=$senderUid")
+                            return
                         }
                         try {
                             val ids = intent.getIntArrayExtra(RecentsBridge.EXTRA_WINDOW_IDS) ?: return
@@ -572,7 +577,8 @@ object RecentsHook {
                 // Bootstrap: SystemUI answers with WINDOWS_CHANGED.
                 // The reply is async, so the current Recents open may
                 // miss fakes; the next open shows them (see KDoc).
-                appContext.sendBroadcast(
+                RecentsBridge.sendWithIdentity(
+                    appContext,
                     Intent(RecentsBridge.ACTION_REQUEST_WINDOWS).apply {
                         setPackage("com.android.systemui")
                     },
@@ -752,7 +758,7 @@ object RecentsHook {
                 putExtra(RecentsBridge.EXTRA_CLASS, component.className)
                 putExtra(RecentsBridge.EXTRA_TASK_ID, taskId)
             }
-            context.sendBroadcast(intent)
+            RecentsBridge.sendWithIdentity(context, intent)
             Log.i(TAG, "launcher: window task ${component.packageName} task=$taskId")
             closeMenu(menuView)
         }

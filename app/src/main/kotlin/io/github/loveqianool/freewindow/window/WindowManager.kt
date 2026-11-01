@@ -371,6 +371,12 @@ object WindowManager : WindowHost {
             windows[w.id] = w.copy(isMuted = muted)
             w.view.setMuted(muted)
         }
+        // Mute is a window-state change like park/collapse/maximize:
+        // without this, the launcher's card cache (and the card's
+        // muted state mark) would not refresh until the next
+        // unrelated window change. notifyRecents dedups, so a
+        // no-change call costs nothing.
+        notifyRecents()
         Log.i(TAG, "setMuted id=$id muted=$muted")
     }
 

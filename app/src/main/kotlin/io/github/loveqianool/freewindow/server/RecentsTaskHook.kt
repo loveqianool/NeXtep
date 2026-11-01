@@ -144,7 +144,10 @@ object RecentsTaskHook {
             setPackage("com.android.systemui")
             putExtra(RecentsBridge.EXTRA_WINDOW_ID, fakeWindowId(taskId))
         }
-        ctx.sendBroadcast(intent)
+        // Identity sharing is required: SystemUI's receiver fails
+        // closed and drops broadcasts whose sender uid is unknown.
+        io.github.loveqianool.freewindow.bridge.RecentsBridge
+            .sendWithIdentity(ctx, intent)
         Log.i(TAG, "recents-tasks: $action window=${fakeWindowId(taskId)}")
     }
 

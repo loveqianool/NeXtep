@@ -29,18 +29,23 @@ import android.util.Log
  *   and [ACTION_CLOSE_WINDOW] (both carry [EXTRA_WINDOW_ID]),
  *   and [ACTION_REQUEST_WINDOWS] (launcher asks for a fresh list, e.g.
  *   when Recents opens and its cache may be empty or stale — this also
- *   picks up mute/crop changes, which do not go through notifyRecents
- *   and therefore do not trigger a WINDOWS_CHANGED broadcast).
+ *   picks up crop changes, which do not go through notifyRecents
+ *   and therefore do not trigger a WINDOWS_CHANGED broadcast
+ *   (mute changes do go through notifyRecents since setMuted calls it).
  *
  * Both receivers are EXPORTED, which is required for delivery between two
  * different apps (a NOT_EXPORTED receiver drops the other process's
- * broadcasts). The actions are namespaced to this module and carry only
- * window-management data — window ids, package names, labels, states —
- * no credentials or user data, and every inbound window id / component is
- * validated by WindowManager before it acts (unknown ids are ignored,
- * a bad component fails the open like a Recents-menu open would). A hostile app
- * sending these broadcasts could at worst open, restore or close a free
- * window, which the user can already do from the launcher.
+ * broadcasts). They are sender-checked, fail-closed: a broadcast is
+ * only accepted when getSentFromUid() returns a listed uid
+ * (system_server, SystemUI, or the launcher) and the sender shared
+ * its identity via sendWithIdentity; anything else is dropped, so a
+ * hostile app cannot open, restore, or close free windows, or plant
+ * fake cards, through these actions. The actions are namespaced to
+ * this module and carry only window-management data — window ids,
+ * package names, labels, states — no credentials or user data, and
+ * every inbound window id / component is validated by WindowManager
+ * before it acts (unknown ids are ignored, a bad component fails
+ * the open like a Recents-menu open would).
  */
 object RecentsBridge {
 
@@ -99,19 +104,23 @@ object RecentsBridge {
             // send WINDOW_TASK and have SystemUI open an activity in
             // a topmost system overlay, or close/restore the user's
             // windows. Only the launcher, system_server (uid 1000) and
-            // SystemUI itself may send these. getSendingUid is looked
-            // up reflectively so an old stub cannot break the build;
-            // if it is unavailable, fall back to accepting (old
-            // behaviour) rather than breaking Recents on this device.
-            val senderUid = sendingUidOf(this)
-            if (senderUid != null) {
-                val allowed = mutableSetOf(1000)
-                packageUid(context, "com.android.systemui")?.let { allowed.add(it) }
-                packageUid(context, "com.android.launcher3")?.let { allowed.add(it) }
-                if (senderUid !in allowed) {
-                    Log.w(TAG, "recents: dropped ${intent.action} from uid=$senderUid")
-                    return
-                }
+            // SystemUI itself may send these.
+            //
+            // Correction (2026-11-01): the previous build checked a
+            // non-existent getSendingUid() via reflection, which
+            // always returned null and fell back to accepting — the
+            // check never ran. The real API (34+) is getSentFromUid(),
+            // and it only returns a real uid when the sender opted
+            // into sharing its identity (see sendWithIdentity below).
+            // Fail CLOSED: an unknown sender (INVALID_UID) or an
+            // unlisted uid is dropped, never accepted.
+            val senderUid = getSentFromUid()
+            val allowed = mutableSetOf(1000)
+            packageUid(context, "com.android.systemui")?.let { allowed.add(it) }
+            packageUid(context, "com.android.launcher3")?.let { allowed.add(it) }
+            if (senderUid == android.os.Process.INVALID_UID || senderUid !in allowed) {
+                Log.w(TAG, "recents: dropped ${intent.action} from uid=$senderUid")
+                return
             }
             when (intent.action) {
                 ACTION_WINDOW_TASK -> {
@@ -143,12 +152,29 @@ object RecentsBridge {
     private var receiverRegistered = false
     private const val TAG = "FreeWindow"
 
-    /** Sending uid of the current broadcast, or null if unavailable. */
-    fun sendingUidOf(receiver: BroadcastReceiver): Int? = runCatching {
-        val m = BroadcastReceiver::class.java.getDeclaredMethod("getSendingUid")
-        m.isAccessible = true
-        m.invoke(receiver) as? Int
-    }.getOrNull()
+    /**
+     * Send a broadcast with identity sharing enabled, so a receiver
+     * can verify the sender via getSentFromUid(). Without this, the
+     * receiver sees INVALID_UID and (correctly, fail-closed) drops
+     * the broadcast — so every legitimate sender in this protocol
+     * must use this helper, not plain sendBroadcast.
+     */
+    fun sendWithIdentity(context: Context, intent: Intent) {
+        try {
+            context.sendBroadcast(
+                intent,
+                null,
+                android.app.BroadcastOptions.makeBasic()
+                    .setShareIdentityEnabled(true).toBundle(),
+            )
+        } catch (e: Throwable) {
+            // A plain send would be dropped by the fail-closed
+            // receiver anyway; still send it so the receiver's drop
+            // log shows what happened, instead of failing silently.
+            Log.w(TAG, "recents: shared-identity send failed, plain fallback", e)
+            context.sendBroadcast(intent)
+        }
+    }
 
     private fun packageUid(context: Context, packageName: String): Int? = runCatching {
         context.packageManager.getApplicationInfo(packageName, 0).uid
@@ -175,7 +201,7 @@ object RecentsBridge {
             putExtra(EXTRA_LABELS, windows.map { it.label }.toTypedArray())
             putExtra(EXTRA_FLAGS, flags)
         }
-        context.sendBroadcast(intent)
+        sendWithIdentity(context, intent)
         Log.i(TAG, "recents: broadcast ${windows.size} windows")
     }
 
