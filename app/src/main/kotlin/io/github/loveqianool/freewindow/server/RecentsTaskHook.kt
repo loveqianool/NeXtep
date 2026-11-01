@@ -1,5 +1,7 @@
 package io.github.loveqianool.freewindow.server
 
+import io.github.loveqianool.freewindow.util.Reflect
+
 import android.content.Context
 import android.content.Intent
 import android.util.Log
@@ -24,13 +26,13 @@ import java.util.concurrent.atomic.AtomicBoolean
  * - removeTask(fakeId) -> send RECENTS_CLOSE to SystemUI and report
  *   true, so the card goes away and the window closes.
  *
- * Fake ids are [FAKE_BASE] + windowId — far above real task ids,
+ * Fake ids are RecentsBridge.FAKE_TASK_BASE + windowId — far above real task ids,
  * which stay small. Window ids are NOT capped at 8: WindowManager
  * hands out ids monotonically (1, 2, 3, …) and never reuses them, so
  * after 8 windows have ever been opened in one SystemUI lifetime
  * the next window gets id 9+, and a 1..8 gate here would silently
  * stop recognising its card taps/swipes. The gate is therefore
- * "above FAKE_BASE", and WindowManager ignores unknown ids
+ * "above FAKE_TASK_BASE", and WindowManager ignores unknown ids
  * on its own side anyway.
  *
  * Safety, in order of importance (this runs in system_server):
@@ -41,7 +43,6 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 object RecentsTaskHook {
     private const val TAG = "FreeWindow"
-    private const val FAKE_BASE = 900000
 
     private val installed = AtomicBoolean(false)
 
@@ -121,10 +122,10 @@ object RecentsTaskHook {
 
     private fun isFake(taskId: Int): Boolean {
         // Window ids are monotonic, not 1..8: see the class KDoc.
-        return taskId > FAKE_BASE
+        return taskId > RecentsBridge.FAKE_TASK_BASE
     }
 
-    private fun fakeWindowId(taskId: Int): Int = taskId - FAKE_BASE
+    private fun fakeWindowId(taskId: Int): Int = taskId - RecentsBridge.FAKE_TASK_BASE
 
     /**
      * SystemUI is the process that owns the windows; system_server only
@@ -138,7 +139,7 @@ object RecentsTaskHook {
         // The chain's thisObject is the task manager service, whose
         // mContext field holds the system_server context. Fall back to
         // the cached context from install time if that lookup fails.
-        val ctx = (getField(chain.thisObject, "mContext") as? Context) ?: systemContext
+        val ctx = (Reflect.getField(chain.thisObject, "mContext") as? Context) ?: systemContext
             ?: throw IllegalStateException("no system context for $action")
         val intent = Intent(action).apply {
             setPackage("com.android.systemui")
@@ -151,22 +152,4 @@ object RecentsTaskHook {
         Log.i(TAG, "recents-tasks: $action window=${fakeWindowId(taskId)}")
     }
 
-    private fun getField(target: Any?, name: String): Any? {
-        if (target == null) return null
-        return try {
-            var clazz: Class<*>? = target.javaClass
-            while (clazz != null) {
-                try {
-                    val field = clazz.getDeclaredField(name)
-                    field.isAccessible = true
-                    return field.get(target)
-                } catch (_: NoSuchFieldException) {
-                    clazz = clazz.superclass
-                }
-            }
-            null
-        } catch (_: Throwable) {
-            null
-        }
-    }
 }

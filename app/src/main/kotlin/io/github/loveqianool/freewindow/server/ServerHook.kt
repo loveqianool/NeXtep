@@ -4,6 +4,7 @@ import android.content.res.Configuration
 import android.util.Log
 import io.github.libxposed.api.XposedInterface
 import io.github.libxposed.api.XposedModule
+import io.github.loveqianool.freewindow.util.Reflect
 import io.github.loveqianool.freewindow.window.WindowMute
 
 /**
@@ -11,7 +12,8 @@ import io.github.loveqianool.freewindow.window.WindowMute
  * - Display-capability matching: FreeWindow-* virtual displays inherit
  *   color mode / touchscreen / keyboard / navigation from the physical
  *   display so apps render correctly.
- * - LOCAL IME policy for FreeWindow-* displays (see installDisplayHook).
+ * - IME: main display (FALLBACK, the default for app-created virtual
+ *   displays) — no getImePolicy hook, by design (see installDisplayHook).
  * - Mute receiver: AppOps OP_PLAY_AUDIO per package (see installMuteReceiver).
  */
 object ServerHook {
@@ -67,7 +69,7 @@ object ServerHook {
                 override fun intercept(chain: XposedInterface.Chain): Any? {
                     val r = chain.proceed()
                     try {
-                        val ctx = getField(chain.thisObject!!, "mContext") as? android.content.Context
+                        val ctx = Reflect.getField(chain.thisObject!!, "mContext") as? android.content.Context
                         if (ctx != null) {
                             installMuteReceiverOnce(ctx)
                             // Recents cards for FreeWindow windows (fake
@@ -230,14 +232,14 @@ object ServerHook {
                     try {
                         val display = chain.thisObject ?: return result
                         val config = chain.getArg(0) as? Configuration ?: return result
-                        val info = callNoArg(display, "getDisplayInfo") ?: return result
-                        val name = getField(info, "name") as? String ?: return result
+                        val info = Reflect.callNoArg(display, "getDisplayInfo") ?: return result
+                        val name = Reflect.getField(info, "name") as? String ?: return result
                         if (!name.startsWith(DisplayEngine.PREFIX)) return result
 
-                        val wmService = getField(display, "mWmService") ?: return result
-                        val root = getField(wmService, "mRoot") ?: return result
-                        val physical = callNoArg(root, "getDefaultDisplay") ?: return result
-                        val ref = callNoArg(physical, "getConfiguration") as? Configuration
+                        val wmService = Reflect.getField(display, "mWmService") ?: return result
+                        val root = Reflect.getField(wmService, "mRoot") ?: return result
+                        val physical = Reflect.callNoArg(root, "getDefaultDisplay") ?: return result
+                        val ref = Reflect.callNoArg(physical, "getConfiguration") as? Configuration
                             ?: return result
 
                         config.colorMode = ref.colorMode
@@ -258,7 +260,7 @@ object ServerHook {
                         // systemReady call is a no-op. This only runs after
                         // a FreeWindow display exists, which is fine — cards
                         // correspond to existing windows anyway.
-                        (getField(wmService, "mContext") as? android.content.Context)
+                        (Reflect.getField(wmService, "mContext") as? android.content.Context)
                             ?.let { ctx ->
                                 installMuteReceiverOnce(ctx)
                                 try {
@@ -276,78 +278,20 @@ object ServerHook {
             })
             Log.i(TAG, "ServerHook installed")
 
-            // Hook getImePolicy() so FreeWindow virtual displays use LOCAL IME
-            // policy: the keyboard shows inside the window, not on the main
-            // display. This avoids the mImeInputTarget=null issue where the
-            // keyboard appears then immediately hides.
-            val imeMethod = displayClass.declaredMethods.firstOrNull {
-                it.name == "getImePolicy" && it.parameterTypes.isEmpty()
-            }
-            if (imeMethod != null) {
-                imeMethod.isAccessible = true
-                module.hook(imeMethod).intercept(object : XposedInterface.Hooker {
-                    override fun intercept(chain: XposedInterface.Chain): Any? {
-                        val result = chain.proceed()
-                        try {
-                            val display = chain.thisObject ?: return result
-                            val info = callNoArg(display, "getDisplayInfo") ?: return result
-                            val name = getField(info, "name") as? String ?: return result
-                            if (!name.startsWith(DisplayEngine.PREFIX)) return result
-                            // WindowManager DISPLAY_IME_POLICY_LOCAL = 0,
-                            // FALLBACK_DISPLAY = 1, HIDE = 2. LOCAL is
-                            // the correct constant for "keyboard in
-                            // the window", but on this device it made
-                            // the keyboard never appear at all (the
-                            // IME window cannot be hosted on an
-                            // app-created VirtualDisplay, or IMMS does
-                            // not route through this hook). Reverted
-                            // to FALLBACK = 1: the keyboard shows on
-                            // the main display, and since the free
-                            // window was downgraded to TYPE_SEARCH_BAR
-                            // (below TYPE_INPUT_METHOD), the keyboard
-                            // sits above the window and is tappable.
-                            // LOCAL needs a different approach (e.g.
-                            // a VirtualDevice-owned display), not
-                            // just this return value.
-                            Log.i(TAG, "$name using FALLBACK IME policy")
-                            return 1
-                        } catch (e: Throwable) {
-                            Log.w(TAG, "IME policy hook failed open", e)
-                        }
-                        return result
-                    }
-                })
-                Log.i(TAG, "IME policy hook installed")
-            } else {
-                Log.w(TAG, "getImePolicy not found")
-            }
+            // No getImePolicy hook, by design. IME must show on the
+            // main display, not inside the window, and FALLBACK (the
+            // default for app-created virtual displays) already does
+            // that — a hook returning FALLBACK would be a no-op. LOCAL
+            // was tried and removed: it made the keyboard never appear
+            // at all on this device (an app-created VirtualDisplay
+            // cannot host an IME window). Since the free window is
+            // TYPE_SEARCH_BAR (below TYPE_INPUT_METHOD), the
+            // main-display keyboard sits above the window and is
+            // tappable.
         } catch (e: Throwable) {
             Log.w(TAG, "ServerHook install failed", e)
         }
     }
 
-    private fun getField(target: Any, name: String): Any? {
-        var cls: Class<*>? = target.javaClass
-        while (cls != null) {
-            try {
-                return cls.getDeclaredField(name).apply { isAccessible = true }.get(target)
-            } catch (e: NoSuchFieldException) {
-                cls = cls.superclass
-            }
-        }
-        return null
-    }
 
-    private fun callNoArg(target: Any, name: String): Any? {
-        var cls: Class<*>? = target.javaClass
-        while (cls != null) {
-            val m = cls.declaredMethods.firstOrNull { it.name == name && it.parameterTypes.isEmpty() }
-            if (m != null) {
-                m.isAccessible = true
-                return m.invoke(target)
-            }
-            cls = cls.superclass
-        }
-        return null
-    }
 }

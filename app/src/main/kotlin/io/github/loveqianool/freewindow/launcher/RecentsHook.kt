@@ -15,6 +15,7 @@ import android.widget.TextView
 import io.github.libxposed.api.XposedInterface
 import io.github.libxposed.api.XposedModule
 import io.github.loveqianool.freewindow.bridge.RecentsBridge
+import io.github.loveqianool.freewindow.util.Reflect
 
 /**
  * Launcher (com.android.launcher3, Trebuchet) side of Recents integration.
@@ -85,7 +86,7 @@ object RecentsHook {
         // a Data element built from the card's own fake Task
         // (title, icon, package, colors, lock flags; thumbnail is
         // null in v1, as the fake Task itself has none yet). Real
-        // cards are untouched (taskId < CARD_FAKE_BASE returns
+        // cards are untouched (taskId < RecentsBridge.FAKE_TASK_BASE returns
         // early), and any failure leaves the original state in
         // place, so this can only leave a card blank, never break
         // Recents.
@@ -132,10 +133,10 @@ object RecentsHook {
             m?.invoke(taskView)
         }.getOrNull() ?: return
         val cardTaskId = runCatching {
-            val key = getField(firstTask, "key")
-            getField(key, "id") as? Int
+            val key = Reflect.getField(firstTask, "key")
+            Reflect.getField(key, "id") as? Int
         }.getOrNull() ?: return
-        if (cardTaskId < CARD_FAKE_BASE) return
+        if (cardTaskId < RecentsBridge.FAKE_TASK_BASE) return
         val tasksField = state.javaClass.declaredFields.firstOrNull {
             it.name == "tasks"
         } ?: return
@@ -145,8 +146,8 @@ object RecentsHook {
         var replacedCount = 0
         for (elem in tasks) {
             if (elem != null && elem.javaClass.name.endsWith("\$NoData")) {
-                val elemTaskId = getField(elem, "taskId") as? Int
-                if (elemTaskId != null && elemTaskId >= CARD_FAKE_BASE) {
+                val elemTaskId = Reflect.getField(elem, "taskId") as? Int
+                if (elemTaskId != null && elemTaskId >= RecentsBridge.FAKE_TASK_BASE) {
                     val data = buildTileData(elem.javaClass.classLoader, firstTask, elemTaskId)
                     if (data != null) {
                         replaced.add(data)
@@ -194,15 +195,15 @@ object RecentsHook {
                 java.lang.Boolean.TYPE,
             )
             ctor.isAccessible = true
-            val title = getField(fakeTask, "title") as? String ?: ""
-            val titleDescription = getField(fakeTask, "titleDescription") as? String ?: title
+            val title = Reflect.getField(fakeTask, "title") as? String ?: ""
+            val titleDescription = Reflect.getField(fakeTask, "titleDescription") as? String ?: title
             val packageName = fakeTaskPackageName(fakeTask)
-            val icon = getField(fakeTask, "icon")
-            val backgroundColor = getField(fakeTask, "colorBackground") as? Int
-                ?: getField(fakeTask, "colorPrimary") as? Int ?: 0
-            val isLocked = getField(fakeTask, "isLocked") as? Boolean ?: false
-            val isAppLocked = getField(fakeTask, "isAppLockEnabled") as? Boolean ?: false
-            val thumbnail = getField(fakeTask, "thumbnail")?.let { thumb ->
+            val icon = Reflect.getField(fakeTask, "icon")
+            val backgroundColor = Reflect.getField(fakeTask, "colorBackground") as? Int
+                ?: Reflect.getField(fakeTask, "colorPrimary") as? Int ?: 0
+            val isLocked = Reflect.getField(fakeTask, "isLocked") as? Boolean ?: false
+            val isAppLocked = Reflect.getField(fakeTask, "isAppLockEnabled") as? Boolean ?: false
+            val thumbnail = Reflect.getField(fakeTask, "thumbnail")?.let { thumb ->
                 if (thumbnailClass.isInstance(thumb)) thumb else null
             }
             try {
@@ -221,7 +222,7 @@ object RecentsHook {
     }
 
     private fun fakeTaskPackageName(fakeTask: Any): String {
-        val key = getField(fakeTask, "key") ?: return ""
+        val key = Reflect.getField(fakeTask, "key") ?: return ""
         val fromKey = runCatching {
             val m = key.javaClass.methods.firstOrNull {
                 it.name == "getPackageName" && it.parameterTypes.isEmpty()
@@ -230,7 +231,7 @@ object RecentsHook {
             m?.invoke(key) as? String
         }.getOrNull()
         if (!fromKey.isNullOrEmpty()) return fromKey
-        val component = getField(key, "component") ?: return ""
+        val component = Reflect.getField(key, "component") ?: return ""
         return runCatching {
             val m = component.javaClass.methods.firstOrNull {
                 it.name == "getPackageName" && it.parameterTypes.isEmpty()
@@ -243,7 +244,6 @@ object RecentsHook {
     // Recents card injection (launcher side).
     // ------------------------------------------------------------------
 
-    private const val CARD_FAKE_BASE = 900000
 
     private data class CardWindow(
         val windowId: Int,
@@ -338,7 +338,7 @@ object RecentsHook {
         val existingIds = list.flatMap { cardTaskIdsOf(it) }.toSet()
         var added = 0
         for (window in synchronized(cardCacheLock) { cardCachedWindows }) {
-            val fakeId = CARD_FAKE_BASE + window.windowId
+            val fakeId = RecentsBridge.FAKE_TASK_BASE + window.windowId
             if (fakeId in existingIds) continue
             try {
                 val fakeSingle = buildFakeSingle(context, window, fakeId, firstItem, templateTask) ?: continue
@@ -388,8 +388,8 @@ object RecentsHook {
     private fun cardTaskId(task: Any?): Int? {
         if (task == null) return null
         return try {
-            val key = getField(task, "key") ?: return null
-            getField(key, "id") as? Int
+            val key = Reflect.getField(task, "key") ?: return null
+            Reflect.getField(key, "id") as? Int
         } catch (_: Throwable) {
             null
         }
@@ -416,7 +416,7 @@ object RecentsHook {
             ?: runCatching { context.classLoader.loadClass(
                 "com.android.systemui.shared.recents.model.Task") }.getOrNull()
             ?: return null
-        val keyClass: Class<*> = templateTask?.let { getField(it, "key")?.javaClass }
+        val keyClass: Class<*> = templateTask?.let { Reflect.getField(it, "key")?.javaClass }
             ?: runCatching { context.classLoader.loadClass(
                 "com.android.systemui.shared.recents.model.Task\$TaskKey") }.getOrNull()
             ?: return null
@@ -470,7 +470,7 @@ object RecentsHook {
         setFieldBestEffort(fakeTask, "title", fakeTitle)
         setFieldBestEffort(fakeTask, "titleDescription", fakeTitle)
         setFieldBestEffort(fakeTask, "topActivity", component)
-        val templateIcon = if (templateTask != null) getField(templateTask, "icon") else null
+        val templateIcon = if (templateTask != null) Reflect.getField(templateTask, "icon") else null
         val icon = runCatching {
             context.packageManager.getApplicationIcon(window.packageName)
         }.getOrNull() ?: templateIcon
@@ -488,7 +488,7 @@ object RecentsHook {
                 "colorPrimary", "colorBackground", "isDockable",
                 "isLocked", "isMinimized", "isVisible", "isAppLockEnabled",
             )) {
-                getField(templateTask, name)?.let { setFieldBestEffort(fakeTask, name, it) }
+                Reflect.getField(templateTask, name)?.let { setFieldBestEffort(fakeTask, name, it) }
             }
         } else {
             setFieldBestEffort(fakeTask, "isVisible", true)
@@ -634,9 +634,9 @@ object RecentsHook {
                     val result = chain.proceed()
                     try {
                         val menuView = chain.thisObject ?: return result
-                        val container = callMethod(menuView, "getTaskContainer")
-                            ?: getField(menuView, "mTaskContainer")
-                            ?: getField(menuView, "taskContainer")
+                        val container = Reflect.callNoArg(menuView, "getTaskContainer")
+                            ?: Reflect.getField(menuView, "mTaskContainer")
+                            ?: Reflect.getField(menuView, "taskContainer")
                         if (container == null) {
                             Log.w(TAG, "launcher: menu container not found for addMenuOption")
                             return result
@@ -676,8 +676,8 @@ object RecentsHook {
                     try {
                         val menuView = chain.thisObject ?: return result
                         val container = chain.args.getOrNull(0)
-                            ?: getField(menuView, "mTaskContainer")
-                            ?: getField(menuView, "taskContainer")
+                            ?: Reflect.getField(menuView, "mTaskContainer")
+                            ?: Reflect.getField(menuView, "taskContainer")
                         if (container == null) {
                             Log.w(TAG, "launcher: menu container not found")
                             return result
@@ -704,19 +704,19 @@ object RecentsHook {
             return
         }
         val context = menuViewAsView.context
-        val task = callMethod(taskContainer, "getTask") ?: run {
+        val task = Reflect.callNoArg(taskContainer, "getTask") ?: run {
             Log.w(TAG, "launcher: task container getTask not found")
             return
         }
-        val key = getField(task, "key") ?: run {
+        val key = Reflect.getField(task, "key") ?: run {
             Log.w(TAG, "launcher: Task.key not found")
             return
         }
-        val taskId = getField(key, "id") as? Int ?: run {
+        val taskId = Reflect.getField(key, "id") as? Int ?: run {
             Log.w(TAG, "launcher: TaskKey.id not found")
             return
         }
-        val baseIntent = getField(key, "baseIntent") as? Intent ?: run {
+        val baseIntent = Reflect.getField(key, "baseIntent") as? Intent ?: run {
             Log.w(TAG, "launcher: TaskKey.baseIntent null, cannot window task")
             return
         }
@@ -726,8 +726,8 @@ object RecentsHook {
         }
         // mOptionLayout holds the menu option views (LinearLayout in the
         // Java TaskMenuView; the Kotlin version names it optionLayout).
-        val optionLayout = (getField(menuView, "mOptionLayout") as? ViewGroup)
-            ?: (getField(menuView, "optionLayout") as? ViewGroup)
+        val optionLayout = (Reflect.getField(menuView, "mOptionLayout") as? ViewGroup)
+            ?: (Reflect.getField(menuView, "optionLayout") as? ViewGroup)
             ?: findOptionLayoutById(menuView)
             ?: run {
                 Log.w(TAG, "launcher: mOptionLayout not found")
@@ -832,14 +832,14 @@ object RecentsHook {
      */
     private fun applyMenuLayoutParams(menuView: Any, optionView: View) {
         try {
-            val taskView = getField(menuView, "mTaskView") ?: return
-            val handler = callMethod(taskView, "getPagedOrientationHandler") ?: return
+            val taskView = Reflect.getField(menuView, "mTaskView") ?: return
+            val handler = Reflect.callNoArg(taskView, "getPagedOrientationHandler") ?: return
             // mActivity in the Java version, mContainer in the Kotlin
             // version; either way, getDeviceProfile is looked up by name.
-            val activity = getField(menuView, "mActivity")
-                ?: getField(menuView, "mContainer")
+            val activity = Reflect.getField(menuView, "mActivity")
+                ?: Reflect.getField(menuView, "mContainer")
                 ?: return
-            val deviceProfile = callMethod(activity, "getDeviceProfile") ?: return
+            val deviceProfile = Reflect.callNoArg(activity, "getDeviceProfile") ?: return
             val lp = optionView.layoutParams ?: return
             val method = handler.javaClass.methods.firstOrNull {
                 it.name == "setLayoutParamsForTaskMenuOptionItem" && it.parameterTypes.size == 3
@@ -869,40 +869,6 @@ object RecentsHook {
             Log.w(TAG, "launcher: close menu failed", e)
         }
     }
-
-    private fun getField(obj: Any?, name: String): Any? {
-        if (obj == null) return null
-        return runCatching {
-            var clazz: Class<*>? = obj.javaClass
-        while (clazz != null) {
-            try {
-                val field = clazz.getDeclaredField(name)
-                field.isAccessible = true
-                return@runCatching field.get(obj)
-            } catch (_: NoSuchFieldException) {
-                clazz = clazz.superclass
-            }
-        }
-        null
-        }.getOrNull()
-    }
-
-    private fun callMethod(obj: Any, name: String): Any? = runCatching {
-        var clazz: Class<*>? = obj.javaClass
-        while (clazz != null) {
-            val method = clazz.methods.firstOrNull {
-                it.name == name && it.parameterTypes.isEmpty()
-            } ?: clazz.declaredMethods.firstOrNull {
-                it.name == name && it.parameterTypes.isEmpty()
-            }
-            if (method != null) {
-                method.isAccessible = true
-                return@runCatching method.invoke(obj)
-            }
-            clazz = clazz.superclass
-        }
-        null
-    }.getOrNull()
 
     private fun getRInt(className: String, fieldName: String): Int? = runCatching {
         // The R class lives in the launcher APK, so it must be loaded

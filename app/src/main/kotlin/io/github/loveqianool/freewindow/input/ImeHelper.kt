@@ -14,9 +14,11 @@ import android.view.WindowManager
  *   the overlay never steals input focus from the system underneath.
  * - When the user taps inside the window ([MotionEvent.ACTION_DOWN]),
  *   [setFocusable] clears NOT_FOCUSABLE. The window can then take focus.
- * - The VirtualDisplay uses LOCAL IME policy (see ServerHook): the keyboard
- *   shows inside the window itself, not on the main display. This avoids the
- *   mImeInputTarget=null issue where the keyboard appears then hides.
+ * - IME shows on the main display (FALLBACK, the default for
+ *   app-created virtual displays; there is deliberately no
+ *   getImePolicy hook in ServerHook). The free window is
+ *   TYPE_SEARCH_BAR, below TYPE_INPUT_METHOD, so the main-display
+ *   keyboard sits above the window and is tappable.
  * - When the user taps outside the window ([MotionEvent.ACTION_OUTSIDE],
  *   delivered via FLAG_WATCH_OUTSIDE_TOUCH), [setFocusable] restores
  *   NOT_FOCUSABLE so focus returns to whatever is underneath.

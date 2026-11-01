@@ -67,7 +67,10 @@ object RecentsBridge {
     const val EXTRA_PACKAGE = "io.github.loveqianool.freewindow.extra.PACKAGE"
     const val EXTRA_CLASS = "io.github.loveqianool.freewindow.extra.CLASS"
     const val EXTRA_TASK_ID = "io.github.loveqianool.freewindow.extra.TASK_ID"
-    /** Window id carried by restore/close broadcasts (was on the notification). */
+    /** Fake Recents task ids are FAKE_TASK_BASE + windowId, shared with the launcher side. */
+    const val FAKE_TASK_BASE = 900000
+
+    /** Window id carried by restore/close broadcasts. */
     const val EXTRA_WINDOW_ID = "io.github.loveqianool.freewindow.extra.WINDOW_ID"
 
     /** One free window, as listed to Recents and as broadcast to the launcher. */
@@ -176,7 +179,7 @@ object RecentsBridge {
         }
     }
 
-    private fun packageUid(context: Context, packageName: String): Int? = runCatching {
+    fun packageUid(context: Context, packageName: String): Int? = runCatching {
         context.packageManager.getApplicationInfo(packageName, 0).uid
     }.getOrNull()
 

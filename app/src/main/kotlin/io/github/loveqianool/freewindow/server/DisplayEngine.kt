@@ -78,9 +78,11 @@ class DisplayEngine(private val context: Context) {
         }
     }
 
-    // OWN_CONTENT_ONLY removed: with LOCAL IME policy the keyboard shows
-    // inside the window, so the virtual display needs to allow system
-    // windows (IME). Flag resolution lives in displayFlags above.
+    // OWN_CONTENT_ONLY stays out: it was removed for the LOCAL IME
+    // experiment, and with IME now on the main display (FALLBACK) the
+    // virtual display needs no system windows — but re-adding the flag
+    // would be an unneeded behaviour change, so the flags stay as they
+    // are. Flag resolution lives in displayFlags above.
 
     private fun readFlag(name: String): Int = try {
         DisplayManager::class.java.getDeclaredField(name)
