@@ -73,6 +73,137 @@ object RecentsHook {
         // for the task query / click / swipe entry points, so the next
         // implementation does not need another probe round.
         installProbe3(module, classLoader)
+        // TEMPORARY PROBE4 (remove with PROBE3, 2026-11-01): PROBE3
+        // settled the injection point — RecentsView.applyLoadPlan(List,
+        // int) — but not how to build a fake Task for it. Probe the
+        // Task object itself: TaskView.bind's Task type, the
+        // RecentTasksList holder, and the Task / TaskKey constructors
+        // and fields, plus the applyLoadPlan argument values.
+        installProbe4(module, classLoader)
+    }
+
+    /**
+     * TEMPORARY PROBE4, launcher side. Logging-only, same rules as
+     * PROBE3: proceed first, log, return the original result unchanged.
+     */
+    private fun installProbe4(module: XposedModule, cl: ClassLoader) {
+        try {
+            // TaskView.bind's parameter type is the Task class name;
+            // its mTask field type says the same thing. RecentTasksList
+            // is where RecentsModel keeps its task list (field taskList).
+            dumpProbe4Class(cl, "com.android.quickstep.views.TaskView")
+            dumpProbe4Class(cl, "com.android.quickstep.RecentTasksList")
+            // Candidate Task / TaskKey classes from the shared recents
+            // library; NOT FOUND here just means TaskView.bind's type
+            // (above) is the real one to dump next.
+            dumpProbe4Class(cl, "com.android.systemui.shared.recents.model.Task")
+            dumpProbe4Class(cl, "com.android.systemui.shared.recents.model.TaskKey")
+            // applyLoadPlan(List, int): log the list size and the int
+            // argument value (display id? running task id? load id?).
+            hookProbe4ApplyLoadPlan(module, cl)
+            // RecentsModel.getTasks(Consumer) returns an Integer; log
+            // its value, not just its class name, to tell a task count
+            // apart from a load identifier.
+            hookProbe4GetTasks(module, cl)
+        } catch (e: Throwable) {
+            Log.w(TAG, "launcher: PROBE4 install failed", e)
+        }
+    }
+
+    private fun dumpProbe4Class(cl: ClassLoader, className: String) {
+        try {
+            val clazz = cl.loadClass(className)
+            for (method in clazz.declaredMethods) {
+                Log.i(
+                    TAG,
+                    "launcher: PROBE4 dump $className method ${method.name}(" +
+                        method.parameterTypes.joinToString { it.name } + "):${method.returnType.name}",
+                )
+            }
+            // Constructors matter here: a fake Task must be built, and
+            // its constructor signature is the only way to build one.
+            for (ctor in clazz.declaredConstructors) {
+                Log.i(
+                    TAG,
+                    "launcher: PROBE4 dump $className ctor(" +
+                        ctor.parameterTypes.joinToString { it.name } + ")",
+                )
+            }
+            for (field in clazz.declaredFields) {
+                Log.i(
+                    TAG,
+                    "launcher: PROBE4 dump $className field ${field.name}:${field.type.name}",
+                )
+            }
+        } catch (e: Throwable) {
+            Log.w(TAG, "launcher: PROBE4 dump $className NOT FOUND")
+        }
+    }
+
+    private fun hookProbe4ApplyLoadPlan(module: XposedModule, cl: ClassLoader) {
+        try {
+            val clazz = cl.loadClass("com.android.quickstep.views.RecentsView")
+            val method = clazz.declaredMethods.firstOrNull {
+                it.name == "applyLoadPlan" && it.parameterTypes.size == 2
+            } ?: run {
+                Log.w(TAG, "launcher: PROBE4 applyLoadPlan not found")
+                return
+            }
+            method.isAccessible = true
+            module.hook(method).intercept(object : XposedInterface.Hooker {
+                override fun intercept(chain: XposedInterface.Chain): Any? {
+                    val result = chain.proceed()
+                    try {
+                        val listSize = (chain.args.getOrNull(0) as? List<*>)?.size
+                        val intArg = chain.args.getOrNull(1) as? Int
+                        Log.i(
+                            TAG,
+                            "launcher: PROBE4 applyLoadPlan listSize=$listSize intArg=$intArg",
+                        )
+                    } catch (_: Throwable) {
+                    }
+                    return result
+                }
+            })
+        } catch (e: Throwable) {
+            Log.w(TAG, "launcher: PROBE4 hook applyLoadPlan failed", e)
+        }
+    }
+
+    private fun hookProbe4GetTasks(module: XposedModule, cl: ClassLoader) {
+        try {
+            val clazz = cl.loadClass("com.android.quickstep.RecentsModel")
+            var matched = 0
+            for (method in clazz.declaredMethods) {
+                if (method.name != "getTasks") continue
+                matched++
+                method.isAccessible = true
+                module.hook(method).intercept(object : XposedInterface.Hooker {
+                    override fun intercept(chain: XposedInterface.Chain): Any? {
+                        val result = chain.proceed()
+                        try {
+                            val argTypes = chain.args.joinToString {
+                                it?.javaClass?.simpleName ?: "null"
+                            }
+                            val resultDesc = when (result) {
+                                is Int -> "Int=$result"
+                                is List<*> -> "List size=${result.size}"
+                                else -> result?.javaClass?.simpleName ?: "null"
+                            }
+                            Log.i(
+                                TAG,
+                                "launcher: PROBE4 RecentsModel.getTasks args=[$argTypes] result=$resultDesc",
+                            )
+                        } catch (_: Throwable) {
+                        }
+                        return result
+                    }
+                })
+            }
+            if (matched == 0) Log.w(TAG, "launcher: PROBE4 hook RecentsModel.getTasks no matching methods")
+        } catch (e: Throwable) {
+            Log.w(TAG, "launcher: PROBE4 hook getTasks failed", e)
+        }
     }
 
     /**
