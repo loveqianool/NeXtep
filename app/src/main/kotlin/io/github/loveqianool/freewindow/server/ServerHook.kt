@@ -41,7 +41,7 @@ object ServerHook {
     fun install(module: XposedModule, classLoader: ClassLoader) {
         if (installed) return
         installed = true
-        Log.i(TAG, "ServerHook install v1.2.4")
+        Log.i(TAG, "ServerHook install v1.2.5")
         installDisplayHook(module, classLoader)
         hookSystemReady(module, classLoader)
     }
@@ -293,9 +293,15 @@ object ServerHook {
                             val info = callNoArg(display, "getDisplayInfo") ?: return result
                             val name = getField(info, "name") as? String ?: return result
                             if (!name.startsWith(DisplayEngine.PREFIX)) return result
-                            // DISPLAY_IME_POLICY_LOCAL = 1
+                            // WindowManager DISPLAY_IME_POLICY_LOCAL = 0,
+                            // FALLBACK_DISPLAY = 1, HIDE = 2. An earlier
+                            // build returned 1 here (FALLBACK: keyboard
+                            // on the main display, not in the window),
+                            // which is why the keyboard sometimes came
+                            // up full-width on the main screen instead
+                            // of inside the free window.
                             Log.i(TAG, "$name using LOCAL IME policy")
-                            return 1
+                            return 0
                         } catch (e: Throwable) {
                             Log.w(TAG, "IME policy hook failed open", e)
                         }

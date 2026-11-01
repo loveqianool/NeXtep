@@ -245,7 +245,12 @@ object RecentsHook {
 
     private const val CARD_FAKE_BASE = 900000
 
-    private data class CardWindow(val windowId: Int, val packageName: String, val label: String)
+    private data class CardWindow(
+        val windowId: Int,
+        val packageName: String,
+        val label: String,
+        val flags: Int = 0,
+    )
 
     private val cardCacheLock = Any()
     private var cardCachedWindows: List<CardWindow> = emptyList()
@@ -258,8 +263,9 @@ object RecentsHook {
      * - The whole injection is best-effort: any failure logs and the
      *   original list proceeds unchanged, so real Recents never breaks
      *   because of a fake card.
-     * - Fake ids are 900000+windowId (window ids 1..8), far above real
-     *   task ids, and a fake id already in the list is never duplicated.
+     * - Fake ids are 900000+windowId (window ids are monotonic, not
+     *   capped at 8), far above real task ids, and a fake id already
+     *   in the list is never duplicated.
      * - The original list is an ArrayList, so fakes are added
      *   in place; if a future build hands an unmodifiable list, the
      *   hook falls back to a copy and replaces the argument.
@@ -453,7 +459,14 @@ object RecentsHook {
         }
         taskCtor.isAccessible = true
         val fakeTask = taskCtor.newInstance(fakeKey)
-        val fakeTitle = "${window.label} (自由窗口)"
+        // The flags are broadcast with the window list; use them so a
+        // card shows its state, not just "(自由窗口)" for every state.
+        val stateMarks = buildString {
+            if (window.flags and RecentsBridge.FLAG_PARKED != 0) append("·已隐藏")
+            if (window.flags and RecentsBridge.FLAG_COLLAPSED != 0) append("·已收起")
+            if (window.flags and RecentsBridge.FLAG_MUTED != 0) append("·已静音")
+        }
+        val fakeTitle = "${window.label} (自由窗口$stateMarks)"
         setFieldBestEffort(fakeTask, "title", fakeTitle)
         setFieldBestEffort(fakeTask, "titleDescription", fakeTitle)
         setFieldBestEffort(fakeTask, "topActivity", component)
@@ -502,19 +515,48 @@ object RecentsHook {
         synchronized(cardCacheLock) {
             if (cardReceiverRegistered) return
             try {
+                // Application context, not the RecentsView's Activity
+                // context: an Activity-registered receiver is unregistered
+                // by the system when the Activity is destroyed (config
+                // change, dark mode, fold/unfold), while the
+                // cardReceiverRegistered flag would stay true and the
+                // cache would stop updating until the launcher process
+                // restarted. An application-context receiver lives for
+                // the process lifetime, so the flag stays valid.
+                val appContext = context.applicationContext ?: context
                 val receiver = object : BroadcastReceiver() {
                     override fun onReceive(context: Context, intent: Intent) {
                         if (intent.action != RecentsBridge.ACTION_WINDOWS_CHANGED) return
+                        // Sender check: this receiver is EXPORTED, so
+                        // without a check any app could forge a
+                        // WINDOWS_CHANGED broadcast and plant fake
+                        // cards (title and icon of its choosing) in
+                        // Recents. Only SystemUI may send this. See
+                        // RecentsBridge for the SystemUI-side check.
+                        val senderUid = RecentsBridge.sendingUidOf(this)
+                        if (senderUid != null) {
+                            val systemUiUid = runCatching {
+                                context.packageManager
+                                    .getApplicationInfo("com.android.systemui", 0).uid
+                            }.getOrNull()
+                            if (systemUiUid != null && senderUid != systemUiUid) {
+                                Log.w(TAG, "launcher: recents-cards dropped WINDOWS_CHANGED from uid=$senderUid")
+                                return
+                            }
+                        }
                         try {
                             val ids = intent.getIntArrayExtra(RecentsBridge.EXTRA_WINDOW_IDS) ?: return
                             val packages = intent.getStringArrayExtra(RecentsBridge.EXTRA_PACKAGES) ?: return
                             val labels = intent.getStringArrayExtra(RecentsBridge.EXTRA_LABELS) ?: return
-                            if (ids.size != packages.size || ids.size != labels.size) {
+                            val flags = intent.getIntArrayExtra(RecentsBridge.EXTRA_FLAGS)
+                            if (ids.size != packages.size || ids.size != labels.size ||
+                                (flags != null && flags.size != ids.size)
+                            ) {
                                 Log.w(TAG, "launcher: recents-cards WINDOWS_CHANGED length mismatch")
                                 return
                             }
                             val list = ids.indices.map { i ->
-                                CardWindow(ids[i], packages[i], labels[i])
+                                CardWindow(ids[i], packages[i], labels[i], flags?.get(i) ?: 0)
                             }
                             synchronized(cardCacheLock) { cardCachedWindows = list }
                             Log.i(TAG, "launcher: recents-cards cached ${list.size} windows")
@@ -525,12 +567,12 @@ object RecentsHook {
                 }
                 val filter = IntentFilter(RecentsBridge.ACTION_WINDOWS_CHANGED)
                 // EXPORTED: the sender is SystemUI, a different app.
-                context.registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED)
+                appContext.registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED)
                 cardReceiverRegistered = true
                 // Bootstrap: SystemUI answers with WINDOWS_CHANGED.
                 // The reply is async, so the current Recents open may
                 // miss fakes; the next open shows them (see KDoc).
-                context.sendBroadcast(
+                appContext.sendBroadcast(
                     Intent(RecentsBridge.ACTION_REQUEST_WINDOWS).apply {
                         setPackage("com.android.systemui")
                     },
@@ -657,7 +699,7 @@ object RecentsHook {
         }
         val context = menuViewAsView.context
         val task = callMethod(taskContainer, "getTask") ?: run {
-            Log.w(TAG, "launcher: TaskIdAttributeContainer.getTask not found")
+            Log.w(TAG, "launcher: task container getTask not found")
             return
         }
         val key = getField(task, "key") ?: run {

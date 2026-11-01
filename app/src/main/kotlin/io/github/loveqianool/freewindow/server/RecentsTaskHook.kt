@@ -30,7 +30,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  * after 8 windows have ever been opened in one SystemUI lifetime
  * the next window gets id 9+, and a 1..8 gate here would silently
  * stop recognising its card taps/swipes. The gate is therefore
- * "at or above FAKE_BASE", and WindowManager ignores unknown ids
+ * "above FAKE_BASE", and WindowManager ignores unknown ids
  * on its own side anyway.
  *
  * Safety, in order of importance (this runs in system_server):

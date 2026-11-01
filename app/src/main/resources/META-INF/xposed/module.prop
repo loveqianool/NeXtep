@@ -1,9 +1,9 @@
 id=nextep
 name=FreeWindow
-version=1.2.4
-versionCode=12
+version=1.2.5
+versionCode=13
 author=loveqianool
-description=Free windows + per-window mute LSPosed module (persistent notification panel)
+description=Free windows + per-window mute LSPosed module (Recents-managed)
 minApiVersion=101
 targetApiVersion=102
 staticScope=false

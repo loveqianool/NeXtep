@@ -396,10 +396,21 @@ object WindowManager : WindowHost {
         }
     }
 
-    /** Window id for an already-open [componentName], most-recent first. */
+    /**
+     * Window id for an already-open [componentName], most-recent first.
+     * Exact ComponentName match first; if the window was opened via a
+     * different entry point of the same app (activity-alias, a second
+     * launcher entry), fall back to the most recent window of the same
+     * package, so a Recents-menu tap restores instead of opening a
+     * duplicate window for an app that is already windowed.
+     */
     fun findWindowId(componentName: ComponentName): Int? {
         return synchronized(zOrder) {
-            zOrder.asReversed().firstOrNull { windows[it]?.componentName == componentName }
+            val reversed = zOrder.asReversed()
+            reversed.firstOrNull { windows[it]?.componentName == componentName }
+                ?: reversed.firstOrNull {
+                    windows[it]?.componentName?.packageName == componentName.packageName
+                }
         }
     }
 

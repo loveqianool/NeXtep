@@ -94,6 +94,25 @@ object RecentsBridge {
 
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
+            // Sender check: this receiver is EXPORTED (cross-process
+            // delivery requires it), so without a check any app could
+            // send WINDOW_TASK and have SystemUI open an activity in
+            // a topmost system overlay, or close/restore the user's
+            // windows. Only the launcher, system_server (uid 1000) and
+            // SystemUI itself may send these. getSendingUid is looked
+            // up reflectively so an old stub cannot break the build;
+            // if it is unavailable, fall back to accepting (old
+            // behaviour) rather than breaking Recents on this device.
+            val senderUid = sendingUidOf(this)
+            if (senderUid != null) {
+                val allowed = mutableSetOf(1000)
+                packageUid(context, "com.android.systemui")?.let { allowed.add(it) }
+                packageUid(context, "com.android.launcher3")?.let { allowed.add(it) }
+                if (senderUid !in allowed) {
+                    Log.w(TAG, "recents: dropped ${intent.action} from uid=$senderUid")
+                    return
+                }
+            }
             when (intent.action) {
                 ACTION_WINDOW_TASK -> {
                     val pkg = intent.getStringExtra(EXTRA_PACKAGE) ?: return
@@ -123,6 +142,17 @@ object RecentsBridge {
 
     private var receiverRegistered = false
     private const val TAG = "FreeWindow"
+
+    /** Sending uid of the current broadcast, or null if unavailable. */
+    fun sendingUidOf(receiver: BroadcastReceiver): Int? = runCatching {
+        val m = BroadcastReceiver::class.java.getDeclaredMethod("getSendingUid")
+        m.isAccessible = true
+        m.invoke(receiver) as? Int
+    }.getOrNull()
+
+    private fun packageUid(context: Context, packageName: String): Int? = runCatching {
+        context.packageManager.getApplicationInfo(packageName, 0).uid
+    }.getOrNull()
 
     /** Broadcast the current window list to the launcher. No setPackage: the
      * launcher package is not known on this side yet (it varies by ROM and
