@@ -36,32 +36,39 @@ object WindowSystemUiHook {
             // The Recents menu's "FreeWindow" item: already open ->
             // restore that window, otherwise open a new one (or complain
             // about the limit/failure).
-            val openOrRestore: (Context, ComponentName) -> Unit = { ctx, component ->
-                val existing = WindowManager.findWindowId(component)
-                if (existing != null) {
-                    // restoreWindow (not a bare unpark) so a collapsed
-                    // window expands instead of just showing its icon again.
-                    WindowManager.restoreWindow(existing)
-                } else if (WindowManager.isAtLimit()) {
-                    Toast.makeText(
-                        ctx,
-                        "FreeWindow：已达 ${WindowManager.MAX_WINDOWS} 个窗口上限，先关掉一个再开",
-                        Toast.LENGTH_SHORT,
-                    ).show()
-                } else if (WindowManager.openApp(ctx, component) < 0) {
-                    Toast.makeText(
-                        ctx,
-                        "FreeWindow：打开窗口失败",
-                        Toast.LENGTH_SHORT,
-                    ).show()
+            val openOrRestore: (Context, ComponentName, Int) -> Unit =
+                { ctx, component, originalTaskId ->
+                    val existing = WindowManager.findWindowId(component)
+                    if (existing != null) {
+                        // restoreWindow (not a bare unpark) so a collapsed
+                        // window expands instead of just showing its icon again.
+                        // Remember the task this menu tap came from, so
+                        // closing the window can auto-swipe that task.
+                        if (originalTaskId > 0) {
+                            WindowManager.setOriginalTaskId(existing, originalTaskId)
+                        }
+                        WindowManager.restoreWindow(existing)
+                    } else if (WindowManager.isAtLimit()) {
+                        Toast.makeText(
+                            ctx,
+                            "FreeWindow：已达 ${WindowManager.MAX_WINDOWS} 个窗口上限，先关掉一个再开",
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    } else if (WindowManager.openApp(ctx, component, originalTaskId) < 0) {
+                        Toast.makeText(
+                            ctx,
+                            "FreeWindow：打开窗口失败",
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    }
                 }
-            }
             RecentsBridge.listener = object : RecentsBridge.Listener {
                 override fun onWindowTask(packageName: String, className: String, taskId: Int) {
                     // taskId is the Recents task on the main display; v1
-                    // windows by relaunching on the VD.
+                    // windows by relaunching on the VD, and the task id
+                    // is kept so closing the window can remove it.
                     // A true task-move would use it; that is a later step.
-                    openOrRestore(app, ComponentName(packageName, className))
+                    openOrRestore(app, ComponentName(packageName, className), taskId)
                 }
 
                 override fun onRestoreWindow(windowId: Int) =

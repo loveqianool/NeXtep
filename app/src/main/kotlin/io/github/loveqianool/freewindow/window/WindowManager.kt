@@ -125,7 +125,11 @@ object WindowManager : WindowHost {
      * The VirtualDisplay is created once the TextureView surface is ready;
      * the app is then launched onto that display.
      */
-    fun openApp(context: Context, componentName: ComponentName): Int {
+    fun openApp(
+        context: Context,
+        componentName: ComponentName,
+        originalTaskId: Int = -1,
+    ): Int {
         val app = context.applicationContext
         init(app)
         val wmRef = wm ?: run {
@@ -172,10 +176,12 @@ object WindowManager : WindowHost {
             isParked = false,
             isMaximized = false,
             isMuted = inherited,
+            originalTaskId = originalTaskId,
         )
-        // Recents needs the new card right away, so broadcast explicitly
-        // (notifyRecents dedups on the full list, and a new window
-        // changes it, so this is never skipped).
+        // Broadcast explicitly; a new window is visible, not parked,
+        // so it adds no card and the dedup in notifyRecents skips the
+        // broadcast — the call is kept so a future state change that
+        // does add a card cannot be missed by a stale last-list.
         notifyRecents()
         Log.i(TAG, "openApp id=$id component=$componentName rect=$rect")
         return id
@@ -198,6 +204,18 @@ object WindowManager : WindowHost {
         rec.view.releaseSurfaceTexture()
         surfaces.remove(id)?.let { runCatching { it.release() } }
         displayEngine?.release(id)
+        // Auto-swipe the original task: the app was windowed from a
+        // Recents card, and without this its main-display task would
+        // linger in Recents after the free window is gone. Best
+        // effort: if SystemUI lacks the permission, this just logs
+        // and the original task stays (the old behaviour). Only for
+        // windows that actually opened (displayId >= 0): on a
+        // display-creation failure closeWindow also runs, and
+        // removing the original task there would swipe away an app
+        // the user never got a window for.
+        if (rec.originalTaskId > 0 && rec.displayId >= 0) {
+            removeOriginalTask(rec.originalTaskId)
+        }
         notifyRecents()
         Log.i(TAG, "closeWindow id=$id")
     }
@@ -400,6 +418,11 @@ object WindowManager : WindowHost {
         } else {
             unparkWindow(id)
         }
+    }
+
+    /** Remember which main-display task a window came from (for close cleanup). */
+    fun setOriginalTaskId(id: Int, originalTaskId: Int) {
+        windows[id]?.let { windows[id] = it.copy(originalTaskId = originalTaskId) }
     }
 
     /**
@@ -1065,12 +1088,19 @@ object WindowManager : WindowHost {
 
     // ------------------------------------------------------------ recents list
 
-    /** All windows for Recents, topmost first, with full state for cards. */
+    /**
+     * Windows for Recents, topmost first, with full state for cards.
+     * Only parked windows (minimized to background, ▽) get a card:
+     * a visible window — normal, maximized, or collapsed to its icon —
+     * is already on screen and needs no Recents entry, so showing one
+     * would only clutter Recents with duplicates of what the user can
+     * already see and tap.
+     */
     fun getRecentsWindows(): List<RecentsBridge.WindowInfo> {
         val app = appContext ?: return emptyList()
         val order = synchronized(zOrder) { zOrder.reversed() }
         return order.mapNotNull { id ->
-            windows[id]?.let { rec ->
+            windows[id]?.takeIf { it.isParked }?.let { rec ->
                 RecentsBridge.WindowInfo(
                     windowId = rec.id,
                     label = appLabel(app, rec.componentName),
@@ -1097,6 +1127,32 @@ object WindowManager : WindowHost {
         if (list == lastRecentsWindows) return
         lastRecentsWindows = list
         RecentsBridge.broadcastWindows(app, list)
+    }
+
+    /**
+     * Remove a main-display task from Recents, the equivalent of the
+     * user swiping its card. Runs in SystemUI, which is expected to
+     * hold MANAGE_ACTIVITY_TASKS; if it does not, the call throws and
+     * is logged, and the original task simply stays in Recents.
+     * IActivityManager.removeTask is hidden, hence reflection.
+     */
+    private fun removeOriginalTask(taskId: Int) {
+        try {
+            val amClass = Class.forName("android.app.ActivityManager")
+            val getService = amClass.getDeclaredMethod("getService")
+                .apply { isAccessible = true }
+            val service = getService.invoke(null) ?: run {
+                Log.w(TAG, "remove original task: no ActivityManager service")
+                return
+            }
+            val removeTask = service.javaClass.getMethod(
+                "removeTask", Int::class.javaPrimitiveType,
+            ).apply { isAccessible = true }
+            val ok = removeTask.invoke(service, taskId) as? Boolean
+            Log.i(TAG, "remove original task=$taskId ok=$ok")
+        } catch (e: Throwable) {
+            Log.w(TAG, "remove original task failed task=$taskId", e)
+        }
     }
 
     private fun appLabel(app: Context, component: ComponentName): String {

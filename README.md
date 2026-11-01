@@ -9,7 +9,7 @@ Android 自由窗口模块（Xposed/LSPosed），基于 [NeXtep](https://github.
 - **后台运行**：窗口可最小化到后台（park），应用继续运行，点击恢复
 - **最大化**：窗口可一键最大化/恢复
 - **按应用静音**：窗口静音基于 AppOps `PLAY_AUDIO` 按包名生效（见下面静音说明）
-- **输入法支持**：窗口内输入框可正常弹出键盘（LOCAL IME 策略）
+- **输入法支持**：键盘显示在主屏（FALLBACK IME 策略；LOCAL 策略在本机上会让键盘完全出不来，已回退）
 
 ## 要求
 
@@ -52,7 +52,7 @@ Android 自由窗口模块（Xposed/LSPosed），基于 [NeXtep](https://github.
 
 - Vector（JingMatrix）的 `VectorConfigCache` 在部分版本上解析 APK 失败（`PackageParser failed ... using fallback ApplicationInfo`），导致 system_server 加载旧版模块代码。如遇此问题，请向 Vector 反馈
 - 输入法在部分应用上可能需要点两次输入框
-- 裁剪后的窗口里输文字：键盘画在虚拟屏里，如果键盘区域不在框选保留区内，键盘会看不到。此时先从面板或菜单恢复完整画面再输入，输完可重新裁剪
+- 裁剪后的窗口里输文字：键盘在主屏弹出，不受框选保留区影响
 
 ## License
 

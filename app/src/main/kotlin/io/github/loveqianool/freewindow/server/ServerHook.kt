@@ -294,14 +294,23 @@ object ServerHook {
                             val name = getField(info, "name") as? String ?: return result
                             if (!name.startsWith(DisplayEngine.PREFIX)) return result
                             // WindowManager DISPLAY_IME_POLICY_LOCAL = 0,
-                            // FALLBACK_DISPLAY = 1, HIDE = 2. An earlier
-                            // build returned 1 here (FALLBACK: keyboard
-                            // on the main display, not in the window),
-                            // which is why the keyboard sometimes came
-                            // up full-width on the main screen instead
-                            // of inside the free window.
-                            Log.i(TAG, "$name using LOCAL IME policy")
-                            return 0
+                            // FALLBACK_DISPLAY = 1, HIDE = 2. LOCAL is
+                            // the correct constant for "keyboard in
+                            // the window", but on this device it made
+                            // the keyboard never appear at all (the
+                            // IME window cannot be hosted on an
+                            // app-created VirtualDisplay, or IMMS does
+                            // not route through this hook). Reverted
+                            // to FALLBACK = 1: the keyboard shows on
+                            // the main display, and since the free
+                            // window was downgraded to TYPE_SEARCH_BAR
+                            // (below TYPE_INPUT_METHOD), the keyboard
+                            // sits above the window and is tappable.
+                            // LOCAL needs a different approach (e.g.
+                            // a VirtualDevice-owned display), not
+                            // just this return value.
+                            Log.i(TAG, "$name using FALLBACK IME policy")
+                            return 1
                         } catch (e: Throwable) {
                             Log.w(TAG, "IME policy hook failed open", e)
                         }

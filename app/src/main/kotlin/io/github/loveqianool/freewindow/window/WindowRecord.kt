@@ -7,6 +7,10 @@ import android.content.ComponentName
  *
  * @param displayId the VirtualDisplay backing this window (-1 until created).
  * @param taskId the app task on the display (-1 until resolved).
+ * @param originalTaskId the Recents task on the main display that was
+ * windowed via the Recents menu (-1 if unknown, e.g. opened before this
+ * field existed). When the free window closes, that original task is
+ * removed from Recents too, so the app does not linger there.
  */
 data class WindowRecord(
     val id: Int,
@@ -19,4 +23,5 @@ data class WindowRecord(
     val isMuted: Boolean,
     /** Collapsed to a draggable icon; the VD keeps its old size (see collapseWindow). */
     val isCollapsed: Boolean = false,
+    val originalTaskId: Int = -1,
 )
