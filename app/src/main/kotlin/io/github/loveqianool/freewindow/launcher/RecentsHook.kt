@@ -18,11 +18,15 @@ import io.github.loveqianool.freewindow.notification.RecentsBridge
  *
  * Only the task menu is hooked here, not the task list: in current
  * Launcher3 the task list is built around GroupTask/DesktopTask, whose
- * shape changed a lot across versions, while the menu path is stable —
- * TaskMenuView.addMenuOptions(TaskIdAttributeContainer) builds the
- * "应用信息 / 分屏" list, and this hook appends one more option after
- * the original list is built. Card injection for FreeWindow windows is a
- * later step, via the system_server recent-task list, not via GroupTask.
+ * shape changed a lot across versions. On v17 QuickStep the menu is
+ * built per item: TaskMenuView.addMenuOption is called once per
+ * built-in item ("应用信息 / 分屏" etc.), while the batch
+ * addMenuOptions is dead code that is never called on menu open
+ * (proven by device probe, 2026-11-01). This hook therefore appends
+ * the FreeWindow option from addMenuOption, moving it to the end on
+ * each subsequent item so it lands last. Card injection for FreeWindow
+ * windows is a later step, via the system_server recent-task list,
+ * not via GroupTask.
  *
  * Everything Launcher-side is reflection-only: Launcher3 classes are not
  * on this module's compile classpath, so every class, method, field and
@@ -59,44 +63,53 @@ object RecentsHook {
         if (!hooked) {
             Log.w(TAG, "launcher: TaskMenuView.addMenuOptions not found, menu hook skipped")
         }
-        // PROBE, remove after diagnosis: see probeMenuMethods.
-        probeMenuMethods(module, classLoader)
+        // The real menu builder on v17 QuickStep (see class KDoc).
+        hookAddMenuOption(module, classLoader, "com.android.quickstep.views.TaskMenuView")
     }
 
     /**
-     * PROBE, remove after diagnosis. The v17 QuickStep TaskMenuView has a
-     * 0-arg addMenuOptions that is never called on menu open, so stop
-     * guessing from old source and ask the device: dump every declared
-     * method of TaskMenuView at install, and hook every menu/option
-     * method (except addMenuOptions, already hooked above) with a
-     * logging-only interceptor. Opening the menu once then shows
-     * exactly which method builds it on this build. Logging only,
-     * original behaviour unchanged.
+     * Hook the per-item builder TaskMenuView.addMenuOption(1 arg).
+     * Device probe (2026-11-01) shows it is called once per built-in
+     * menu item (4 calls per menu open), while addMenuOptions is never
+     * called. The task container is not an argument here, so it is
+     * resolved from the menu view itself: first the private
+     * getTaskContainer() getter (Kotlin TaskMenuView has one), then
+     * the mTaskContainer / taskContainer fields. appendOption's tag
+     * guard moves our option to the end on later items, so after the
+     * last built-in item it lands last instead of after the first.
      */
-    private fun probeMenuMethods(module: XposedModule, cl: ClassLoader) {
+    private fun hookAddMenuOption(module: XposedModule, cl: ClassLoader, className: String) {
         try {
-            val clazz = cl.loadClass("com.android.quickstep.views.TaskMenuView")
-            for (m in clazz.declaredMethods) {
-                Log.i(TAG, "launcher: probe TaskMenuView method ${m.name}(${m.parameterTypes.size})")
+            val clazz = cl.loadClass(className)
+            val method = clazz.declaredMethods.firstOrNull {
+                it.name == "addMenuOption" && it.parameterTypes.size == 1
+            } ?: run {
+                Log.w(TAG, "launcher: $className.addMenuOption not found")
+                return
             }
-            for (m in clazz.declaredMethods) {
-                if (m.name == "addMenuOptions") continue
-                val lower = m.name.lowercase()
-                if (!lower.contains("menu") && !lower.contains("option")) continue
-                try {
-                    m.isAccessible = true
-                    module.hook(m).intercept(object : XposedInterface.Hooker {
-                        override fun intercept(chain: XposedInterface.Chain): Any? {
-                            Log.i(TAG, "launcher: probe ${m.name}(${m.parameterTypes.size}) called")
-                            return chain.proceed()
+            method.isAccessible = true
+            module.hook(method).intercept(object : XposedInterface.Hooker {
+                override fun intercept(chain: XposedInterface.Chain): Any? {
+                    val result = chain.proceed()
+                    try {
+                        val menuView = chain.thisObject ?: return result
+                        val container = callMethod(menuView, "getTaskContainer")
+                            ?: getField(menuView, "mTaskContainer")
+                            ?: getField(menuView, "taskContainer")
+                        if (container == null) {
+                            Log.w(TAG, "launcher: menu container not found for addMenuOption")
+                            return result
                         }
-                    })
-                } catch (e: Throwable) {
-                    Log.w(TAG, "launcher: probe hook ${m.name} failed", e)
+                        appendOption(menuView, container)
+                    } catch (e: Throwable) {
+                        Log.w(TAG, "launcher: append FreeWindow option failed", e)
+                    }
+                    return result
                 }
-            }
+            })
+            Log.i(TAG, "launcher: menu hook installed on $className.addMenuOption")
         } catch (e: Throwable) {
-            Log.w(TAG, "launcher: probe TaskMenuView methods failed", e)
+            Log.w(TAG, "launcher: hook $className.addMenuOption failed", e)
         }
     }
 
@@ -120,9 +133,6 @@ object RecentsHook {
                 override fun intercept(chain: XposedInterface.Chain): Any? {
                     val result = chain.proceed()
                     try {
-                        // PROBE, remove after diagnosis: tells whether the
-                        // hooked addMenuOptions runs at all on menu open.
-                        Log.i(TAG, "launcher: addMenuOptions intercepted, args=${chain.args.size}")
                         val menuView = chain.thisObject ?: return result
                         val container = chain.args.getOrNull(0)
                             ?: getField(menuView, "mTaskContainer")
@@ -182,10 +192,17 @@ object RecentsHook {
                 Log.w(TAG, "launcher: mOptionLayout not found")
                 return
             }
-        // Guard against double-append when both TaskMenuView and its
-        // WithArrow subclass hook the same menu open.
+        // One copy only: if our option is already present (later
+        // built-in items after the first addMenuOption call, or a
+        // second hook firing for the same menu open), move it to the
+        // end instead of adding a duplicate, so it lands last.
         for (i in 0 until optionLayout.childCount) {
-            if (optionLayout.getChildAt(i)?.tag == OPTION_TAG) return
+            val existing = optionLayout.getChildAt(i)
+            if (existing?.tag == OPTION_TAG) {
+                optionLayout.removeView(existing)
+                optionLayout.addView(existing)
+                return
+            }
         }
         val optionView = inflateOptionView(context, menuView, optionLayout)
             ?: run {
