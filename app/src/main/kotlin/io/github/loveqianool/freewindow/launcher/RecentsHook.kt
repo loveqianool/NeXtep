@@ -1144,8 +1144,10 @@ object RecentsHook {
         }
     }
 
-    private fun getField(obj: Any, name: String): Any? = runCatching {
-        var clazz: Class<*>? = obj.javaClass
+    private fun getField(obj: Any?, name: String): Any? {
+        if (obj == null) return null
+        return runCatching {
+            var clazz: Class<*>? = obj.javaClass
         while (clazz != null) {
             try {
                 val field = clazz.getDeclaredField(name)
@@ -1156,7 +1158,8 @@ object RecentsHook {
             }
         }
         null
-    }.getOrNull()
+        }.getOrNull()
+    }
 
     private fun callMethod(obj: Any, name: String): Any? = runCatching {
         var clazz: Class<*>? = obj.javaClass
