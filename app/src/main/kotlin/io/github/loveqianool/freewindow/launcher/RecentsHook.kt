@@ -549,14 +549,18 @@ object RecentsHook {
                         // checked a non-existent getSendingUid() and
                         // never actually filtered anything.
                         val senderUid = getSentFromUid()
-                        val systemUiUid = runCatching {
-                            context.packageManager
-                                .getApplicationInfo("com.android.systemui", 0).uid
-                        }.getOrNull()
-                        if (senderUid == android.os.Process.INVALID_UID ||
-                            systemUiUid == null || senderUid != systemUiUid
-                        ) {
-                            Log.w(TAG, "launcher: recents-cards dropped WINDOWS_CHANGED from uid=$senderUid")
+                        val systemUiUid = RecentsBridge.packageUid(context, "com.android.systemui")
+                        if (senderUid == android.os.Process.INVALID_UID) {
+                            // See RecentsBridge: INVALID_UID after an
+                            // update usually means SystemUI is still on
+                            // an old build (no full reboot), so its
+                            // WINDOWS_CHANGED carries no identity and
+                            // is dropped here — cards stop updating.
+                            Log.w(TAG, "launcher: recents-cards dropped WINDOWS_CHANGED: sender did not share identity (INVALID_UID) — likely version skew: SystemUI still on an old build, full reboot required")
+                            return
+                        }
+                        if (systemUiUid == null || senderUid != systemUiUid) {
+                            Log.w(TAG, "launcher: recents-cards dropped WINDOWS_CHANGED from unlisted uid=$senderUid")
                             return
                         }
                         try {

@@ -121,8 +121,20 @@ object RecentsBridge {
             val allowed = mutableSetOf(1000)
             packageUid(context, "com.android.systemui")?.let { allowed.add(it) }
             packageUid(context, "com.android.launcher3")?.let { allowed.add(it) }
-            if (senderUid == android.os.Process.INVALID_UID || senderUid !in allowed) {
-                Log.w(TAG, "recents: dropped ${intent.action} from uid=$senderUid")
+            if (senderUid == android.os.Process.INVALID_UID) {
+                // Distinct from an unlisted uid: INVALID_UID means the
+                // sender did not share its identity. The usual cause
+                // after an update is version skew — one of
+                // system_server / SystemUI / launcher is still running
+                // an old build (no full reboot), whose sends carry no
+                // identity, so the fail-closed receiver drops them and
+                // the menu tap silently does nothing. A full reboot
+                // (not just a SystemUI restart) fixes it.
+                Log.w(TAG, "recents: dropped ${intent.action}: sender did not share identity (INVALID_UID) — likely version skew: a sender process is still on an old build, full reboot required")
+                return
+            }
+            if (senderUid !in allowed) {
+                Log.w(TAG, "recents: dropped ${intent.action} from unlisted uid=$senderUid")
                 return
             }
             when (intent.action) {

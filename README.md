@@ -24,6 +24,8 @@ Android 自由窗口模块（Xposed/LSPosed），基于 [NeXtep](https://github.
 3. 勾选上述三个作用域
 4. **完整重启手机**（仅重启 SystemUI 不够，system_server 需重载模块）
 
+> 更新后必须完整重启，不能只重启 SystemUI 或启动器：跨进程广播有发送方校验（失败即拒绝），如果 system_server、SystemUI、启动器里有一个还在跑旧版本，旧版广播没有共享身份会被新版直接丢弃，表现为菜单点了没反应、卡片不更新。看到日志里 `did not share identity (INVALID_UID)` 就是这个原因，完整重启即可。
+
 ## 使用
 
 - 下拉通知栏，点击 **FreeWindow** 常驻通知打开应用面板

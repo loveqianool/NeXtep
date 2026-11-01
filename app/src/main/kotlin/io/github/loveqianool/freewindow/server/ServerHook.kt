@@ -43,7 +43,10 @@ object ServerHook {
     fun install(module: XposedModule, classLoader: ClassLoader) {
         if (installed) return
         installed = true
-        Log.i(TAG, "ServerHook install v1.2.5")
+        // Version from BuildConfig, generated from Gradle's single
+        // source of truth — never hardcode it here again (it drifted
+        // from the installed version before).
+        Log.i(TAG, "ServerHook install ${io.github.loveqianool.freewindow.BuildConfig.VERSION_NAME} (${io.github.loveqianool.freewindow.BuildConfig.VERSION_CODE})")
         installDisplayHook(module, classLoader)
         hookSystemReady(module, classLoader)
     }
