@@ -1,7 +1,9 @@
 package io.github.loveqianool.freewindow.launcher
 
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
@@ -95,6 +97,338 @@ object RecentsHook {
         // a real Task instance taken out of the applyLoadPlan list,
         // where the real class is actually loaded. Logging-only.
         installProbe6(module, classLoader)
+        // Card injection (2026-11-01, PROBE6-complete): append a fake
+        // SingleTask per FreeWindow window to the Recents list, in
+        // RecentsView.applyLoadPlan, before the original method runs.
+        // The window list comes from SystemUI's WINDOWS_CHANGED
+        // broadcast (same protocol as the system_server cache); fake
+        // ids are 900000+windowId, so a tap / swipe on a fake card
+        // reaches the system_server startActivityFromRecents /
+        // removeTask interception, which forwards RECENTS_RESTORE /
+        // RECENTS_CLOSE to SystemUI. See the function KDoc for the
+        // safety rules that keep real Recents intact.
+        installCardInjection(module, classLoader)
+    }
+
+    // ------------------------------------------------------------------
+    // Recents card injection (launcher side, PROBE6-complete).
+    // ------------------------------------------------------------------
+
+    private const val CARD_FAKE_BASE = 900000
+
+    private data class CardWindow(val windowId: Int, val packageName: String, val label: String)
+
+    private val cardCacheLock = Any()
+    private var cardCachedWindows: List<CardWindow> = emptyList()
+    private var cardReceiverRegistered = false
+
+    /**
+     * Inject fake SingleTasks for FreeWindow windows into Recents.
+     *
+     * Safety, in order of importance:
+     * - The whole injection is best-effort: any failure logs and the
+     *   original list proceeds unchanged, so real Recents never breaks
+     *   because of a fake card.
+     * - Fake ids are 900000+windowId (window ids 1..8), far above real
+     *   task ids, and a fake id already in the list is never duplicated.
+     * - The original list is an ArrayList (PROBE6), so fakes are added
+     *   in place; if a future build hands an unmodifiable list, the
+     *   hook falls back to a copy and replaces the argument.
+     * - A window without a launch intent is skipped, not faked with a
+     *   broken component (same rule as the system_server fake tasks).
+     * - Fake cards carry a " (自由窗口)" title suffix, so a windowized
+     *   app does not show two identical cards (its real main-display
+     *   task stays in Recents alongside the fake FreeWindow card).
+     * - The load identifier (applyLoadPlan's int argument) is left
+     *   untouched; only the list is modified.
+     * - The cache is async, like the system_server one: a window
+     *   change broadcasts WINDOWS_CHANGED, and the next Recents open
+     *   after that shows the fake card. The first Recents open after
+     *   a launcher restart may miss fakes, because the REQUEST_WINDOWS
+     *   reply has not arrived yet; the second open shows them.
+     */
+    private fun installCardInjection(module: XposedModule, cl: ClassLoader) {
+        try {
+            val clazz = cl.loadClass("com.android.quickstep.views.RecentsView")
+            val method = clazz.declaredMethods.firstOrNull {
+                it.name == "applyLoadPlan" && it.parameterTypes.size == 2
+            } ?: run {
+                Log.w(TAG, "launcher: recents-cards applyLoadPlan not found")
+                return
+            }
+            method.isAccessible = true
+            module.hook(method).intercept(object : XposedInterface.Hooker {
+                override fun intercept(chain: XposedInterface.Chain): Any? {
+                    try {
+                        injectCards(chain)
+                    } catch (e: Throwable) {
+                        Log.w(TAG, "launcher: recents-cards inject failed, original list kept", e)
+                    }
+                    return chain.proceed()
+                }
+            })
+            Log.i(TAG, "launcher: recents-cards hook installed on RecentsView.applyLoadPlan")
+        } catch (e: Throwable) {
+            Log.w(TAG, "launcher: recents-cards install failed", e)
+        }
+    }
+
+    private fun injectCards(chain: XposedInterface.Chain) {
+        val recentsView = chain.thisObject as? View ?: return
+        val context = recentsView.context ?: return
+        ensureCardReceiver(context)
+        val windows = synchronized(cardCacheLock) { cardCachedWindows }
+        if (windows.isEmpty()) return
+        val listArg = chain.args.getOrNull(0) as? MutableList<Any?> ?: run {
+            // Not a MutableList (unmodifiable / Kotlin read-only view):
+            // copy, inject into the copy, and replace the argument.
+            val orig = chain.args.getOrNull(0) as? List<*> ?: return
+            val copy = ArrayList<Any?>(orig)
+            val added = addFakeCards(context, copy)
+            if (added > 0) chain.args[0] = copy
+            if (added > 0) Log.i(TAG, "launcher: recents-cards injected $added fake cards (copied list)")
+            return
+        }
+        val added = addFakeCards(context, listArg)
+        if (added > 0) Log.i(TAG, "launcher: recents-cards injected $added fake cards")
+    }
+
+    private fun addFakeCards(context: Context, list: MutableList<Any?>): Int {
+        // Template Task for colours / defaults; null when the list is
+        // empty (a Recents open with no real tasks at all). The first
+        // list item itself is also kept, because its runtime class is
+        // the SingleTask class to construct fakes with.
+        val firstItem = list.firstOrNull()
+        val templateTask = firstItem?.let { cardTaskOf(it) }
+        val existingIds = list.flatMap { cardTaskIdsOf(it) }.toSet()
+        var added = 0
+        for (window in synchronized(cardCacheLock) { cardCachedWindows }) {
+            val fakeId = CARD_FAKE_BASE + window.windowId
+            if (fakeId in existingIds) continue
+            try {
+                val fakeSingle = buildFakeSingle(context, window, fakeId, firstItem, templateTask) ?: continue
+                list.add(fakeSingle)
+                added++
+            } catch (e: Throwable) {
+                Log.w(TAG, "launcher: recents-cards build fake for ${window.packageName} failed", e)
+            }
+        }
+        return added
+    }
+
+    /** The Task inside a SingleTask, or null for a GroupTask / unknown item. */
+    private fun cardTaskOf(item: Any?): Any? {
+        if (item == null) return null
+        return try {
+            val getTask = item.javaClass.methods.firstOrNull {
+                it.name == "getTask" && it.parameterTypes.isEmpty()
+            } ?: return null
+            getTask.isAccessible = true
+            getTask.invoke(item)
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    /** All Task ids inside a list item (SingleTask: one, GroupTask: many). */
+    private fun cardTaskIdsOf(item: Any?): List<Int> {
+        if (item == null) return emptyList()
+        return try {
+            val single = cardTaskOf(item)
+            if (single != null) {
+                val id = cardTaskId(single)
+                return if (id != null) listOf(id) else emptyList()
+            }
+            val getTasks = item.javaClass.methods.firstOrNull {
+                it.name == "getTasks" && it.parameterTypes.isEmpty()
+            } ?: return emptyList()
+            getTasks.isAccessible = true
+            val tasks = getTasks.invoke(item) as? List<*> ?: return emptyList()
+            tasks.mapNotNull { cardTaskId(it) }
+        } catch (_: Throwable) {
+            emptyList()
+        }
+    }
+
+    private fun cardTaskId(task: Any?): Int? {
+        if (task == null) return null
+        return try {
+            val key = getField(task, "key") ?: return null
+            getField(key, "id") as? Int
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    private fun buildFakeSingle(
+        context: Context,
+        window: CardWindow,
+        fakeId: Int,
+        templateSingle: Any?,
+        templateTask: Any?,
+    ): Any? {
+        val launchIntent = context.packageManager
+            .getLaunchIntentForPackage(window.packageName) ?: run {
+                Log.w(TAG, "launcher: recents-cards no launch intent for ${window.packageName}")
+                return null
+            }
+        val component = launchIntent.component ?: return null
+        // Task / TaskKey classes must come from a runtime instance when
+        // one exists (install-time loadClass hits the stub, PROBE4);
+        // at Recents-open time the real classes are loaded, so the
+        // fallback loadClass below also works then.
+        val taskClass: Class<*> = templateTask?.javaClass
+            ?: runCatching { context.classLoader.loadClass(
+                "com.android.systemui.shared.recents.model.Task") }.getOrNull()
+            ?: return null
+        val keyClass: Class<*> = templateTask?.let { getField(it, "key")?.javaClass }
+            ?: runCatching { context.classLoader.loadClass(
+                "com.android.systemui.shared.recents.model.Task\$TaskKey") }.getOrNull()
+            ?: return null
+        // TaskKey(int id, int windowingMode, Intent baseIntent,
+        // ComponentName component, int userId, long lastActiveTime).
+        // windowingMode 1 = FULLSCREEN, so the card renders as a normal
+        // card, not a freeform one.
+        val keyCtor = keyClass.declaredConstructors.firstOrNull {
+            it.parameterTypes.size == 6 &&
+                it.parameterTypes[0] == Int::class.javaPrimitiveType &&
+                it.parameterTypes[1] == Int::class.javaPrimitiveType &&
+                it.parameterTypes[2] == Intent::class.java &&
+                it.parameterTypes[3] == android.content.ComponentName::class.java &&
+                it.parameterTypes[4] == Int::class.javaPrimitiveType &&
+                it.parameterTypes[5] == Long::class.javaPrimitiveType
+        } ?: run {
+            Log.w(TAG, "launcher: recents-cards TaskKey 6-arg ctor not found")
+            return null
+        }
+        keyCtor.isAccessible = true
+        val fakeKey = keyCtor.newInstance(
+            fakeId, 1, launchIntent, component, 0, System.currentTimeMillis())
+        // mHashCode is computed by the constructor; refresh it anyway
+        // in case this build's ctor leaves it at zero.
+        runCatching {
+            val update = keyClass.methods.firstOrNull {
+                it.name == "updateHashCode" && it.parameterTypes.isEmpty()
+            }
+            update?.isAccessible = true
+            update?.invoke(fakeKey)
+        }
+        // Task(TaskKey), then fill the display fields. All Task fields
+        // are set accessible first, so a private field on some build
+        // does not abort the whole fake.
+        val taskCtor = taskClass.declaredConstructors.firstOrNull {
+            it.parameterTypes.size == 1 && it.parameterTypes[0] == keyClass
+        } ?: run {
+            Log.w(TAG, "launcher: recents-cards Task(TaskKey) ctor not found")
+            return null
+        }
+        taskCtor.isAccessible = true
+        val fakeTask = taskCtor.newInstance(fakeKey)
+        val fakeTitle = "${window.label} (自由窗口)"
+        setFieldBestEffort(fakeTask, "title", fakeTitle)
+        setFieldBestEffort(fakeTask, "titleDescription", fakeTitle)
+        setFieldBestEffort(fakeTask, "topActivity", component)
+        val templateIcon = if (templateTask != null) getField(templateTask, "icon") else null
+        val icon = runCatching {
+            context.packageManager.getApplicationIcon(window.packageName)
+        }.getOrNull() ?: templateIcon
+        setFieldBestEffort(fakeTask, "icon", icon)
+        // Thumbnail is null in v1: the card shows its icon and title,
+        // and TaskView's thumbnail loader has no real task to load from
+        // for a fake id. A FreeWindow screenshot thumbnail is a
+        // follow-up, not a v1 requirement.
+        setFieldBestEffort(fakeTask, "thumbnail", null)
+        setFieldBestEffort(
+            fakeTask, "taskDescription",
+            android.app.ActivityManager.TaskDescription(fakeTitle, null, 0))
+        if (templateTask != null) {
+            for (name in listOf(
+                "colorPrimary", "colorBackground", "isDockable",
+                "isLocked", "isMinimized", "isVisible", "isAppLockEnabled",
+            )) {
+                getField(templateTask, name)?.let { setFieldBestEffort(fakeTask, name, it) }
+            }
+        } else {
+            setFieldBestEffort(fakeTask, "isVisible", true)
+        }
+        // SingleTask(Task): the wrapper applyLoadPlan's list holds.
+        // Its class comes from a runtime list item when one exists;
+        // the fallback loadClass only runs when the list was empty.
+        val singleClass: Class<*> = templateSingle?.javaClass
+            ?: runCatching { context.classLoader.loadClass(
+                "com.android.quickstep.util.SingleTask") }.getOrNull()
+            ?: return null
+        val singleCtor = singleClass.declaredConstructors.firstOrNull {
+            it.parameterTypes.size == 1 && it.parameterTypes[0] == taskClass
+        } ?: run {
+            Log.w(TAG, "launcher: recents-cards SingleTask(Task) ctor not found")
+            return null
+        }
+        singleCtor.isAccessible = true
+        return singleCtor.newInstance(fakeTask)
+    }
+
+    private fun ensureCardReceiver(context: Context) {
+        if (cardReceiverRegistered) return
+        synchronized(cardCacheLock) {
+            if (cardReceiverRegistered) return
+            try {
+                val receiver = object : BroadcastReceiver() {
+                    override fun onReceive(context: Context, intent: Intent) {
+                        if (intent.action != RecentsBridge.ACTION_WINDOWS_CHANGED) return
+                        try {
+                            val ids = intent.getIntArrayExtra(RecentsBridge.EXTRA_WINDOW_IDS) ?: return
+                            val packages = intent.getStringArrayExtra(RecentsBridge.EXTRA_PACKAGES) ?: return
+                            val labels = intent.getStringArrayExtra(RecentsBridge.EXTRA_LABELS) ?: return
+                            if (ids.size != packages.size || ids.size != labels.size) {
+                                Log.w(TAG, "launcher: recents-cards WINDOWS_CHANGED length mismatch")
+                                return
+                            }
+                            val list = ids.indices.map { i ->
+                                CardWindow(ids[i], packages[i], labels[i])
+                            }
+                            synchronized(cardCacheLock) { cardCachedWindows = list }
+                            Log.i(TAG, "launcher: recents-cards cached ${list.size} windows")
+                        } catch (e: Throwable) {
+                            Log.w(TAG, "launcher: recents-cards WINDOWS_CHANGED parse failed", e)
+                        }
+                    }
+                }
+                val filter = IntentFilter(RecentsBridge.ACTION_WINDOWS_CHANGED)
+                // EXPORTED: the sender is SystemUI, a different app.
+                context.registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED)
+                cardReceiverRegistered = true
+                // Bootstrap: SystemUI answers with WINDOWS_CHANGED.
+                // The reply is async, so the current Recents open may
+                // miss fakes; the next open shows them (see KDoc).
+                context.sendBroadcast(
+                    Intent(RecentsBridge.ACTION_REQUEST_WINDOWS).apply {
+                        setPackage("com.android.systemui")
+                    },
+                )
+            } catch (e: Throwable) {
+                Log.w(TAG, "launcher: recents-cards receiver register failed", e)
+            }
+        }
+    }
+
+    private fun setFieldBestEffort(target: Any, name: String, value: Any?) {
+        try {
+            var clazz: Class<*>? = target.javaClass
+            while (clazz != null) {
+                try {
+                    val field = clazz.getDeclaredField(name)
+                    field.isAccessible = true
+                    field.set(target, value)
+                    return
+                } catch (_: NoSuchFieldException) {
+                    clazz = clazz.superclass
+                }
+            }
+        } catch (_: Throwable) {
+            // Best-effort: a missing field just leaves that attribute
+            // at its constructor default.
+        }
     }
 
     /**
