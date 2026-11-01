@@ -80,6 +80,27 @@ object RecentsHook {
         // RecentTasksList holder, and the Task / TaskKey constructors
         // and fields, plus the applyLoadPlan argument values.
         installProbe4(module, classLoader)
+        // TEMPORARY PROBE5 (remove with PROBE3, 2026-11-01): PROBE4
+        // showed TaskView.bind takes a SingleTask, not a Task, and
+        // createTaskContainer takes the shared-recents Task. The list
+        // applyLoadPlan receives is therefore a list of SingleTask /
+        // GroupTask wrappers, and a fake card needs a fake SingleTask.
+        // Probe SingleTask and GroupTask construction only; the Task /
+        // TaskKey tables are already in PROBE4's dump.
+        installProbe5(module, classLoader)
+    }
+
+    /**
+     * TEMPORARY PROBE5, launcher side. Logging-only, same rules as
+     * PROBE3/PROBE4: dump tables only, no hooks, no behaviour change.
+     */
+    private fun installProbe5(module: XposedModule, cl: ClassLoader) {
+        try {
+            dumpProbeClass(cl, "PROBE5", "com.android.quickstep.util.SingleTask")
+            dumpProbeClass(cl, "PROBE5", "com.android.quickstep.util.GroupTask")
+        } catch (e: Throwable) {
+            Log.w(TAG, "launcher: PROBE5 install failed", e)
+        }
     }
 
     /**
@@ -91,13 +112,13 @@ object RecentsHook {
             // TaskView.bind's parameter type is the Task class name;
             // its mTask field type says the same thing. RecentTasksList
             // is where RecentsModel keeps its task list (field taskList).
-            dumpProbe4Class(cl, "com.android.quickstep.views.TaskView")
-            dumpProbe4Class(cl, "com.android.quickstep.RecentTasksList")
+            dumpProbeClass(cl, "PROBE4", "com.android.quickstep.views.TaskView")
+            dumpProbeClass(cl, "PROBE4", "com.android.quickstep.RecentTasksList")
             // Candidate Task / TaskKey classes from the shared recents
             // library; NOT FOUND here just means TaskView.bind's type
             // (above) is the real one to dump next.
-            dumpProbe4Class(cl, "com.android.systemui.shared.recents.model.Task")
-            dumpProbe4Class(cl, "com.android.systemui.shared.recents.model.TaskKey")
+            dumpProbeClass(cl, "PROBE4", "com.android.systemui.shared.recents.model.Task")
+            dumpProbeClass(cl, "PROBE4", "com.android.systemui.shared.recents.model.TaskKey")
             // applyLoadPlan(List, int): log the list size and the int
             // argument value (display id? running task id? load id?).
             hookProbe4ApplyLoadPlan(module, cl)
@@ -110,13 +131,13 @@ object RecentsHook {
         }
     }
 
-    private fun dumpProbe4Class(cl: ClassLoader, className: String) {
+    private fun dumpProbeClass(cl: ClassLoader, tag: String, className: String) {
         try {
             val clazz = cl.loadClass(className)
             for (method in clazz.declaredMethods) {
                 Log.i(
                     TAG,
-                    "launcher: PROBE4 dump $className method ${method.name}(" +
+                    "launcher: $tag dump $className method ${method.name}(" +
                         method.parameterTypes.joinToString { it.name } + "):${method.returnType.name}",
                 )
             }
@@ -125,18 +146,18 @@ object RecentsHook {
             for (ctor in clazz.declaredConstructors) {
                 Log.i(
                     TAG,
-                    "launcher: PROBE4 dump $className ctor(" +
+                    "launcher: $tag dump $className ctor(" +
                         ctor.parameterTypes.joinToString { it.name } + ")",
                 )
             }
             for (field in clazz.declaredFields) {
                 Log.i(
                     TAG,
-                    "launcher: PROBE4 dump $className field ${field.name}:${field.type.name}",
+                    "launcher: $tag dump $className field ${field.name}:${field.type.name}",
                 )
             }
         } catch (e: Throwable) {
-            Log.w(TAG, "launcher: PROBE4 dump $className NOT FOUND")
+            Log.w(TAG, "launcher: $tag dump $className NOT FOUND")
         }
     }
 
