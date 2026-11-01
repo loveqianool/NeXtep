@@ -122,14 +122,24 @@ object RecentsHook {
         }
     }
 
+    // updateTaskViewState runs on the launcher UI thread for every
+    // visible card on every state update, so the reflective lookups
+    // below are cached per class instead of re-scanned each call.
+    // Classes are stable for the launcher process lifetime, so the
+    // cache never goes stale; a miss just means "not found".
+    private val firstTaskMethodCache = mutableMapOf<Class<*>, java.lang.reflect.Method?>()
+    private val tasksFieldCache = mutableMapOf<Class<*>, java.lang.reflect.Field?>()
+    private var tileCtorCache: Triple<ClassLoader?, java.lang.reflect.Constructor<*>, Class<*>>? = null
+
     private fun replaceNoDataWithData(chain: XposedInterface.Chain) {
         val state = chain.args.getOrNull(0) ?: return
         val taskView = chain.thisObject ?: return
         val firstTask = runCatching {
-            val m = taskView.javaClass.methods.firstOrNull {
-                it.name == "getFirstTask" && it.parameterTypes.isEmpty()
+            val m = firstTaskMethodCache.getOrPut(taskView.javaClass) {
+                taskView.javaClass.methods.firstOrNull {
+                    it.name == "getFirstTask" && it.parameterTypes.isEmpty()
+                }?.apply { isAccessible = true }
             }
-            m?.isAccessible = true
             m?.invoke(taskView)
         }.getOrNull() ?: return
         val cardTaskId = runCatching {
@@ -137,10 +147,11 @@ object RecentsHook {
             Reflect.getField(key, "id") as? Int
         }.getOrNull() ?: return
         if (cardTaskId < RecentsBridge.FAKE_TASK_BASE) return
-        val tasksField = state.javaClass.declaredFields.firstOrNull {
-            it.name == "tasks"
+        val tasksField = tasksFieldCache.getOrPut(state.javaClass) {
+            state.javaClass.declaredFields.firstOrNull {
+                it.name == "tasks"
+            }?.apply { isAccessible = true }
         } ?: return
-        tasksField.isAccessible = true
         val tasks = tasksField.get(state) as? List<*> ?: return
         val replaced = ArrayList<Any?>()
         var replacedCount = 0
@@ -177,24 +188,33 @@ object RecentsHook {
 
     private fun buildTileData(loader: ClassLoader?, fakeTask: Any, fakeTaskId: Int): Any? {
         return try {
-            val dataClass = Class.forName(
-                "com.android.quickstep.recents.ui.viewmodel.TaskData\$Data", false, loader)
-            val thumbnailClass = Class.forName(
-                "com.android.systemui.shared.recents.model.ThumbnailData", false, loader)
-            val ctor = dataClass.getDeclaredConstructor(
-                java.lang.Integer.TYPE,
-                String::class.java,
-                String::class.java,
-                String::class.java,
-                Drawable::class.java,
-                thumbnailClass,
-                java.lang.Integer.TYPE,
-                java.lang.Boolean.TYPE,
-                java.lang.Boolean.TYPE,
-                java.time.Duration::class.java,
-                java.lang.Boolean.TYPE,
-            )
-            ctor.isAccessible = true
+            // Class.forName + getDeclaredConstructor on every card,
+            // every update, was the hot part of this fix; cache the
+            // constructor per loader (stable per process).
+            val cached = tileCtorCache
+            val (ctor, thumbnailClass) = if (cached != null && cached.first === loader) {
+                cached.second to cached.third
+            } else {
+                val dataClass = Class.forName(
+                    "com.android.quickstep.recents.ui.viewmodel.TaskData\$Data", false, loader)
+                val thumbClass = Class.forName(
+                    "com.android.systemui.shared.recents.model.ThumbnailData", false, loader)
+                val c = dataClass.getDeclaredConstructor(
+                    java.lang.Integer.TYPE,
+                    String::class.java,
+                    String::class.java,
+                    String::class.java,
+                    Drawable::class.java,
+                    thumbClass,
+                    java.lang.Integer.TYPE,
+                    java.lang.Boolean.TYPE,
+                    java.lang.Boolean.TYPE,
+                    java.time.Duration::class.java,
+                    java.lang.Boolean.TYPE,
+                ).apply { isAccessible = true }
+                tileCtorCache = Triple(loader, c, thumbClass)
+                c to thumbClass
+            }
             val title = Reflect.getField(fakeTask, "title") as? String ?: ""
             val titleDescription = Reflect.getField(fakeTask, "titleDescription") as? String ?: title
             val packageName = fakeTaskPackageName(fakeTask)
@@ -223,22 +243,12 @@ object RecentsHook {
 
     private fun fakeTaskPackageName(fakeTask: Any): String {
         val key = Reflect.getField(fakeTask, "key") ?: return ""
-        val fromKey = runCatching {
-            val m = key.javaClass.methods.firstOrNull {
-                it.name == "getPackageName" && it.parameterTypes.isEmpty()
-            }
-            m?.isAccessible = true
-            m?.invoke(key) as? String
-        }.getOrNull()
+        // Same method search as Reflect.callNoArg, reused instead of
+        // a third copy of it.
+        val fromKey = Reflect.callNoArg(key, "getPackageName") as? String
         if (!fromKey.isNullOrEmpty()) return fromKey
         val component = Reflect.getField(key, "component") ?: return ""
-        return runCatching {
-            val m = component.javaClass.methods.firstOrNull {
-                it.name == "getPackageName" && it.parameterTypes.isEmpty()
-            }
-            m?.isAccessible = true
-            m?.invoke(component) as? String
-        }.getOrNull() ?: ""
+        return Reflect.callNoArg(component, "getPackageName") as? String ?: ""
     }
 
     // Recents card injection (launcher side).
