@@ -64,8 +64,14 @@ object RecentsHook {
     private fun hookMenu(module: XposedModule, cl: ClassLoader, className: String): Boolean {
         return try {
             val clazz = cl.loadClass(className)
+            // Prefer the 1-arg overload (Java TaskMenuView), fall back to
+            // the 0-arg overload (Kotlin TaskMenuViewWithArrow, where the
+            // container lives in a taskContainer field instead of an arg).
+            // Requiring exactly 1 arg made the WithArrow class unhookable.
             val method = clazz.declaredMethods.firstOrNull {
                 it.name == "addMenuOptions" && it.parameterTypes.size == 1
+            } ?: clazz.declaredMethods.firstOrNull {
+                it.name == "addMenuOptions" && it.parameterTypes.isEmpty()
             } ?: run {
                 Log.w(TAG, "launcher: $className.addMenuOptions not found")
                 return false
@@ -76,7 +82,10 @@ object RecentsHook {
                     val result = chain.proceed()
                     try {
                         val menuView = chain.thisObject ?: return result
-                        val container = chain.args.getOrNull(0) ?: return result
+                        val container = chain.args.getOrNull(0)
+                            ?: getField(menuView, "mTaskContainer")
+                            ?: getField(menuView, "taskContainer")
+                            ?: return result
                         appendOption(menuView, container)
                     } catch (e: Throwable) {
                         Log.w(TAG, "launcher: append FreeWindow option failed", e)
@@ -115,8 +124,9 @@ object RecentsHook {
             return
         }
         // mOptionLayout holds the menu option views (LinearLayout in the
-        // Java TaskMenuView; same field name in the Kotlin version).
+        // Java TaskMenuView; the Kotlin version names it optionLayout).
         val optionLayout = (getField(menuView, "mOptionLayout") as? ViewGroup)
+            ?: (getField(menuView, "optionLayout") as? ViewGroup)
             ?: findOptionLayoutById(menuView)
             ?: run {
                 Log.w(TAG, "launcher: mOptionLayout not found")
@@ -209,7 +219,11 @@ object RecentsHook {
         try {
             val taskView = getField(menuView, "mTaskView") ?: return
             val handler = callMethod(taskView, "getPagedOrientationHandler") ?: return
-            val activity = getField(menuView, "mActivity") ?: return
+            // mActivity in the Java version, mContainer in the Kotlin
+            // version; either way, getDeviceProfile is looked up by name.
+            val activity = getField(menuView, "mActivity")
+                ?: getField(menuView, "mContainer")
+                ?: return
             val deviceProfile = callMethod(activity, "getDeviceProfile") ?: return
             val lp = optionView.layoutParams ?: return
             val method = handler.javaClass.methods.firstOrNull {

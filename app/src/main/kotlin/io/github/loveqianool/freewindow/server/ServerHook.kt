@@ -250,8 +250,23 @@ object ServerHook {
                         // Fallback trigger: systemReady hook may not fire on all
                         // ROMs. This hook is proven to run (see log below), and a
                         // mute request always happens after a window is created.
+                        // The same fallback must also install RecentsTaskHook:
+                        // it was previously only installed from systemReady,
+                        // so on a ROM where systemReady never fires, the fake
+                        // recent-task cards would never be enabled at all.
+                        // install() is AtomicBoolean-guarded, so a later
+                        // systemReady call is a no-op. This only runs after
+                        // a FreeWindow display exists, which is fine — cards
+                        // correspond to existing windows anyway.
                         (getField(wmService, "mContext") as? android.content.Context)
-                            ?.let { installMuteReceiverOnce(it) }
+                            ?.let { ctx ->
+                                installMuteReceiverOnce(ctx)
+                                try {
+                                    RecentsTaskHook.install(module, classLoader, ctx)
+                                } catch (e: Throwable) {
+                                    Log.w(TAG, "install RecentsTaskHook from display hook failed", e)
+                                }
+                            }
                         Log.i(TAG, "$name matched physical capabilities")
                     } catch (e: Throwable) {
                         Log.w(TAG, "display config hook failed open", e)
