@@ -108,6 +108,88 @@ object RecentsHook {
         // RECENTS_CLOSE to SystemUI. See the function KDoc for the
         // safety rules that keep real Recents intact.
         installCardInjection(module, classLoader)
+        // TEMPORARY PROBE7 (remove with PROBE3, 2026-11-01): fake
+        // cards inject (recents-cards injected N) but render with no
+        // title and no content on device. The list injection works;
+        // the display does not. TaskView's tile state is loaded
+        // asynchronously (TaskTileUiState, via a TasksRepository keyed
+        // by task id), and a fake id has no system task to load from,
+        // so the async load likely overwrites the fake Task's title /
+        // icon / thumbnail with empty state. Probe the tile-state
+        // classes and log what state a fake card actually receives.
+        installProbe7(module, classLoader)
+    }
+
+    /**
+     * TEMPORARY PROBE7, launcher side. Logging-only: dump the tile
+     * state classes, and log the tile state TaskView receives, so a
+     * fake card's empty title / content can be traced to the loader
+     * that clears it, instead of guessed at.
+     */
+    private fun installProbe7(module: XposedModule, cl: ClassLoader) {
+        try {
+            dumpProbeClass(cl, "PROBE7",
+                "com.android.quickstep.recents.ui.viewmodel.TaskTileUiState")
+            dumpProbeClass(cl, "PROBE7",
+                "com.android.quickstep.recents.data.TasksRepository")
+            dumpProbeClass(cl, "PROBE7",
+                "com.android.quickstep.util.TasksRepository")
+            // TaskView.updateTaskViewState is the point where async
+            // tile state reaches the card UI. Log the state for every
+            // card, and flag fake ids (900000+) explicitly, so a fake
+            // card's empty state stands out from real cards' states.
+            try {
+                val taskViewClass = cl.loadClass("com.android.quickstep.views.TaskView")
+                for (method in taskViewClass.declaredMethods) {
+                    if (method.name != "updateTaskViewState" &&
+                        !method.name.startsWith("updateTaskViewState")) continue
+                    method.isAccessible = true
+                    module.hook(method).intercept(object : XposedInterface.Hooker {
+                        override fun intercept(chain: XposedInterface.Chain): Any? {
+                            val result = chain.proceed()
+                            try {
+                                val state = chain.args.getOrNull(0)
+                                val taskView = chain.thisObject
+                                val firstTask = runCatching {
+                                    val m = taskView?.javaClass?.methods?.firstOrNull {
+                                        it.name == "getFirstTask" && it.parameterTypes.isEmpty()
+                                    }
+                                    m?.isAccessible = true
+                                    m?.invoke(taskView)
+                                }.getOrNull()
+                                val taskId = runCatching {
+                                    val key = getField(firstTask, "key")
+                                    getField(key, "id") as? Int
+                                }.getOrNull()
+                                val stateDesc = if (state == null) {
+                                    "null"
+                                } else {
+                                    val fields = state.javaClass.declaredFields.mapNotNull { f ->
+                                        runCatching {
+                                            f.isAccessible = true
+                                            val v = f.get(state)
+                                            "${f.name}=${if (v == null) "null" else v.javaClass.simpleName}"
+                                        }.getOrNull()
+                                    }.joinToString()
+                                    "${state.javaClass.simpleName}[$fields]"
+                                }
+                                Log.i(
+                                    TAG,
+                                    "launcher: PROBE7 updateTaskViewState taskId=$taskId " +
+                                        "isFake=${taskId != null && taskId >= CARD_FAKE_BASE} state=$stateDesc",
+                                )
+                            } catch (_: Throwable) {
+                            }
+                            return result
+                        }
+                    })
+                }
+            } catch (e: Throwable) {
+                Log.w(TAG, "launcher: PROBE7 hook updateTaskViewState failed", e)
+            }
+        } catch (e: Throwable) {
+            Log.w(TAG, "launcher: PROBE7 install failed", e)
+        }
     }
 
     // ------------------------------------------------------------------
