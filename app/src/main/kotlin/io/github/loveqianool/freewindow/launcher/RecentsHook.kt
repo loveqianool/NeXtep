@@ -238,7 +238,7 @@ object RecentsHook {
     }
 
     private fun buildTileData(loader: ClassLoader?, fakeTask: Any, fakeTaskId: Int): Any? {
-        try {
+        return try {
             val dataClass = Class.forName(
                 "com.android.quickstep.recents.ui.viewmodel.TaskData\$Data", false, loader)
             val thumbnailClass = Class.forName(
