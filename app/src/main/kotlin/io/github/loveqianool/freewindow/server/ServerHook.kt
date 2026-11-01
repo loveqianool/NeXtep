@@ -74,15 +74,7 @@ object ServerHook {
                     try {
                         val ctx = Reflect.getField(chain.thisObject!!, "mContext") as? android.content.Context
                         if (ctx != null) {
-                            installMuteReceiverOnce(ctx)
-                            // Recents cards for FreeWindow windows (fake
-                            // recent tasks, see RecentsTaskHook). Best
-                            // effort: a failure here only loses the cards.
-                            try {
-                                RecentsTaskHook.install(module, cl, ctx)
-                            } catch (e: Throwable) {
-                                Log.w(TAG, "install RecentsTaskHook failed", e)
-                            }
+                            installServerExtras(module, cl, ctx)
                         } else {
                             Log.w(TAG, "systemReady: mContext null")
                         }
@@ -111,6 +103,23 @@ object ServerHook {
         Thread {
             if (!installMuteReceiver(ctx)) muteReceiverStarted.set(false)
         }.start()
+    }
+
+    /**
+     * The two post-boot extras, shared by both triggers (systemReady
+     * and the first FreeWindow display-config computation, whichever
+     * fires first): the mute receiver and the Recents fake-task
+     * hooks. Both are install-once guarded, so a second trigger is
+     * a no-op. Best effort: a failure here only loses the cards,
+     * never the window itself.
+     */
+    private fun installServerExtras(module: XposedModule, cl: ClassLoader, ctx: android.content.Context) {
+        installMuteReceiverOnce(ctx)
+        try {
+            RecentsTaskHook.install(module, cl, ctx)
+        } catch (e: Throwable) {
+            Log.w(TAG, "install RecentsTaskHook failed", e)
+        }
     }
 
     /**
@@ -264,14 +273,7 @@ object ServerHook {
                         // a FreeWindow display exists, which is fine — cards
                         // correspond to existing windows anyway.
                         (Reflect.getField(wmService, "mContext") as? android.content.Context)
-                            ?.let { ctx ->
-                                installMuteReceiverOnce(ctx)
-                                try {
-                                    RecentsTaskHook.install(module, classLoader, ctx)
-                                } catch (e: Throwable) {
-                                    Log.w(TAG, "install RecentsTaskHook from display hook failed", e)
-                                }
-                            }
+                            ?.let { ctx -> installServerExtras(module, classLoader, ctx) }
                         Log.i(TAG, "$name matched physical capabilities")
                     } catch (e: Throwable) {
                         Log.w(TAG, "display config hook failed open", e)

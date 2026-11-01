@@ -381,11 +381,6 @@ object WindowManager : WindowHost {
         Log.i(TAG, "maximized id=$id rect=$rect")
     }
 
-    /** Clear a window's crop without expanding or unparking it. */
-    fun resetCrop(id: Int) {
-        windows[id]?.view?.resetCrop()
-    }
-
     fun setMuted(id: Int, muted: Boolean) {
         val rec = windows[id] ?: return
         val app = appContext ?: return
@@ -592,10 +587,11 @@ object WindowManager : WindowHost {
             rec.view.requestLayout()
         }
         // Resize the VirtualDisplay in place (no rebuild, no task move).
+        // app is already non-null here (early return above), so no
+        // second nullable shadow is needed.
         val vd = displayEngine?.get(id)
         if (vd != null) {
-            val app = appContext
-            val dpi = if (app != null) densityDpi(app) else 440
+            val dpi = densityDpi(app)
             val (vdW, vdH) = vdSizeForWindow(clamped, rec.view)
             runCatching {
                 vd.resize(vdW, vdH, dpi)

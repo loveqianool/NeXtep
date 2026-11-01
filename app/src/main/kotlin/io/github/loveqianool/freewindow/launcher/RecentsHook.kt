@@ -25,12 +25,14 @@ import io.github.loveqianool.freewindow.util.Reflect
  * shape changed a lot across versions. On v17 QuickStep the menu is
  * built per item: TaskMenuView.addMenuOption is called once per
  * built-in item ("应用信息 / 分屏" etc.), while the batch
- * addMenuOptions is dead code that is never called on menu open
- * (proven on device, 2026-11-01). This hook therefore appends
+ * addMenuOptions is never called on menu open (proven on device,
+ * 2026-11-01, so its hook was removed). This hook therefore appends
  * the FreeWindow option from addMenuOption, moving it to the end on
- * each subsequent item so it lands last. Card injection for FreeWindow
- * windows is launcher-side, in RecentsView.applyLoadPlan, not via
- * GroupTask and not via the system_server recent-task list.
+ * each subsequent item so it lands last. If a future Trebuchet
+ * version revives batch menu building, the option will need a
+ * batch hook again. Card injection for FreeWindow windows is
+ * launcher-side, in RecentsView.applyLoadPlan, not via GroupTask
+ * and not via the system_server recent-task list.
  *
  * Everything Launcher-side is reflection-only: Launcher3 classes are not
  * on this module's compile classpath, so every class, method, field and
@@ -59,14 +61,6 @@ object RecentsHook {
         if (installed) return
         installed = true
         launcherClassLoader = classLoader
-        // TaskMenuViewWithArrow (tablet / grid variants) may override
-        // addMenuOptions; hooking both is safe because appendOption()
-        // skips when its option is already present (tag check below).
-        var hooked = hookMenu(module, classLoader, "com.android.quickstep.views.TaskMenuView")
-        hooked = hookMenu(module, classLoader, "com.android.quickstep.views.TaskMenuViewWithArrow") || hooked
-        if (!hooked) {
-            Log.w(TAG, "launcher: TaskMenuView.addMenuOptions not found, menu hook skipped")
-        }
         // The real menu builder on v17 QuickStep (see class KDoc).
         hookAddMenuOption(module, classLoader, "com.android.quickstep.views.TaskMenuView")
         // Same for the tablet / grid variant: it was only hooked via
@@ -670,49 +664,6 @@ object RecentsHook {
             Log.i(TAG, "launcher: menu hook installed on $className.addMenuOption")
         } catch (e: Throwable) {
             Log.w(TAG, "launcher: hook $className.addMenuOption failed", e)
-        }
-    }
-
-    private fun hookMenu(module: XposedModule, cl: ClassLoader, className: String): Boolean {
-        return try {
-            val clazz = cl.loadClass(className)
-            // Prefer the 1-arg overload (Java TaskMenuView), fall back to
-            // the 0-arg overload (Kotlin TaskMenuViewWithArrow, where the
-            // container lives in a taskContainer field instead of an arg).
-            // Requiring exactly 1 arg made the WithArrow class unhookable.
-            val method = clazz.declaredMethods.firstOrNull {
-                it.name == "addMenuOptions" && it.parameterTypes.size == 1
-            } ?: clazz.declaredMethods.firstOrNull {
-                it.name == "addMenuOptions" && it.parameterTypes.isEmpty()
-            } ?: run {
-                Log.w(TAG, "launcher: $className.addMenuOptions not found")
-                return false
-            }
-            method.isAccessible = true
-            module.hook(method).intercept(object : XposedInterface.Hooker {
-                override fun intercept(chain: XposedInterface.Chain): Any? {
-                    val result = chain.proceed()
-                    try {
-                        val menuView = chain.thisObject ?: return result
-                        val container = chain.args.getOrNull(0)
-                            ?: Reflect.getField(menuView, "mTaskContainer")
-                            ?: Reflect.getField(menuView, "taskContainer")
-                        if (container == null) {
-                            Log.w(TAG, "launcher: menu container not found")
-                            return result
-                        }
-                        appendOption(menuView, container)
-                    } catch (e: Throwable) {
-                        Log.w(TAG, "launcher: append FreeWindow option failed", e)
-                    }
-                    return result
-                }
-            })
-            Log.i(TAG, "launcher: menu hook installed on $className (${method.parameterTypes.size}-arg)")
-            true
-        } catch (e: Throwable) {
-            Log.w(TAG, "launcher: hook $className failed", e)
-            false
         }
     }
 

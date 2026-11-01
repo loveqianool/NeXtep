@@ -70,16 +70,11 @@ class FreeWindowView @JvmOverloads constructor(
     private val inverseCropMatrix = Matrix()
     private var hasCropTransform = false
 
-    private var iconLastRawX = 0f
-    private var iconLastRawY = 0f
-    private var iconDragging = false
-    private val iconTouchSlop = ViewConfiguration.get(context).scaledTouchSlop
-
-    /** Toggle-zone drag state, same pattern as the collapse icon. */
-    private var toggleLastRawX = 0f
-    private var toggleLastRawY = 0f
-    private var toggleDragging = false
-    private val toggleTouchSlop = ViewConfiguration.get(context).scaledTouchSlop
+    /** Shared drag state for the toggle zone and the collapse icon
+     * (see DragTracker below); TitleBar keeps its own drag path
+     * because it splits across intercept + touch. */
+    private val toggleDrag = DragTracker(ViewConfiguration.get(context).scaledTouchSlop)
+    private val iconDrag = DragTracker(ViewConfiguration.get(context).scaledTouchSlop)
 
     /** Ensures touch events are forwarded in order (DOWN before MOVE/UP). */
     private var lastForwardAt = 0L
@@ -313,33 +308,21 @@ class FreeWindowView @JvmOverloads constructor(
             setOnTouchListener { _, event ->
                 when (event.actionMasked) {
                     MotionEvent.ACTION_DOWN -> {
-                        toggleLastRawX = event.rawX
-                        toggleLastRawY = event.rawY
-                        toggleDragging = false
+                        toggleDrag.onDown(event)
                         true
                     }
                     MotionEvent.ACTION_MOVE -> {
-                        val dx = event.rawX - toggleLastRawX
-                        val dy = event.rawY - toggleLastRawY
-                        if (!toggleDragging && hypot(dx, dy) > toggleTouchSlop) {
-                            toggleDragging = true
-                        }
-                        if (toggleDragging) {
-                            val idx = dx.toInt()
-                            val idy = dy.toInt()
-                            host.onMove(toggleId, idx, idy)
-                            toggleLastRawX += idx
-                            toggleLastRawY += idy
+                        if (toggleDrag.onMove(event)) {
+                            host.onMove(toggleId, toggleDrag.dx, toggleDrag.dy)
                         }
                         true
                     }
                     MotionEvent.ACTION_UP -> {
-                        if (!toggleDragging) toggleTitleBar()
-                        toggleDragging = false
+                        if (!toggleDrag.end()) toggleTitleBar()
                         true
                     }
                     MotionEvent.ACTION_CANCEL -> {
-                        toggleDragging = false
+                        toggleDrag.end()
                         true
                     }
                     else -> true
@@ -543,36 +526,22 @@ class FreeWindowView @JvmOverloads constructor(
             setOnTouchListener { _, event ->
                 when (event.actionMasked) {
                     MotionEvent.ACTION_DOWN -> {
-                        iconLastRawX = event.rawX
-                        iconLastRawY = event.rawY
-                        iconDragging = false
+                        iconDrag.onDown(event)
                         true
                     }
                     MotionEvent.ACTION_MOVE -> {
-                        val dx = event.rawX - iconLastRawX
-                        val dy = event.rawY - iconLastRawY
-                        if (!iconDragging && hypot(dx, dy) > iconTouchSlop) {
-                            iconDragging = true
-                        }
-                        if (iconDragging) {
-                            // Same integer-advance rule as TitleBar: do not
-                            // discard the sub-pixel remainder on slow drags.
-                            val idx = dx.toInt()
-                            val idy = dy.toInt()
-                            host.onMove(id, idx, idy)
-                            iconLastRawX += idx
-                            iconLastRawY += idy
+                        if (iconDrag.onMove(event)) {
+                            host.onMove(id, iconDrag.dx, iconDrag.dy)
                         }
                         true
                     }
                     MotionEvent.ACTION_UP -> {
                         // Tap (no drag) restores; a drag just ends here.
-                        if (!iconDragging) host.onExpand(id)
-                        iconDragging = false
+                        if (!iconDrag.end()) host.onExpand(id)
                         true
                     }
                     MotionEvent.ACTION_CANCEL -> {
-                        iconDragging = false
+                        iconDrag.end()
                         true
                     }
                     else -> true
@@ -647,5 +616,50 @@ private class CropSelectionOverlayView(context: Context) : View(context) {
             canvas.drawRect(it, fillPaint)
             canvas.drawRect(it, strokePaint)
         }
+    }
+}
+
+/**
+ * Drag state shared by the toggle zone and the collapse icon.
+ * Same integer-advance rule as TitleBar: only the integer pixels
+ * actually moved are applied, and the sub-pixel remainder is kept
+ * in lastRaw, so a slow drag (under 1px per event) still moves the
+ * window instead of discarding the remainder on every MOVE.
+ * No allocation per MOVE: dx/dy are fields, not a returned Pair.
+ */
+private class DragTracker(private val slop: Int) {
+    /** Integer advance of the last MOVE, valid when onMove() returned true. */
+    var dx = 0
+        private set
+    var dy = 0
+        private set
+    private var lastRawX = 0f
+    private var lastRawY = 0f
+    private var dragging = false
+
+    fun onDown(event: MotionEvent) {
+        lastRawX = event.rawX
+        lastRawY = event.rawY
+        dragging = false
+    }
+
+    /** True once the gesture has passed the slop and is a drag. */
+    fun onMove(event: MotionEvent): Boolean {
+        val x = event.rawX - lastRawX
+        val y = event.rawY - lastRawY
+        if (!dragging && hypot(x, y) > slop) dragging = true
+        if (!dragging) return false
+        dx = x.toInt()
+        dy = y.toInt()
+        lastRawX += dx
+        lastRawY += dy
+        return true
+    }
+
+    /** Ends the gesture; returns true if it was a drag (false = a tap). */
+    fun end(): Boolean {
+        val wasDragging = dragging
+        dragging = false
+        return wasDragging
     }
 }
