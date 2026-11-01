@@ -24,9 +24,14 @@ import java.util.concurrent.atomic.AtomicBoolean
  * - removeTask(fakeId) -> send RECENTS_CLOSE to SystemUI and report
  *   true, so the card goes away and the window closes.
  *
- * Fake ids are [FAKE_BASE] + windowId (window ids are 1..8, so fake
- * ids are 900001..900008 — far above real task ids, which stay
- * small).
+ * Fake ids are [FAKE_BASE] + windowId — far above real task ids,
+ * which stay small. Window ids are NOT capped at 8: WindowManager
+ * hands out ids monotonically (1, 2, 3, …) and never reuses them, so
+ * after 8 windows have ever been opened in one SystemUI lifetime
+ * the next window gets id 9+, and a 1..8 gate here would silently
+ * stop recognising its card taps/swipes. The gate is therefore
+ * "at or above FAKE_BASE", and WindowManager ignores unknown ids
+ * on its own side anyway.
  *
  * Safety, in order of importance (this runs in system_server):
  * - Every hook body is wrapped so a failure returns the original
@@ -115,8 +120,8 @@ object RecentsTaskHook {
     }
 
     private fun isFake(taskId: Int): Boolean {
-        val windowId = taskId - FAKE_BASE
-        return windowId in 1..8
+        // Window ids are monotonic, not 1..8: see the class KDoc.
+        return taskId > FAKE_BASE
     }
 
     private fun fakeWindowId(taskId: Int): Int = taskId - FAKE_BASE
