@@ -215,6 +215,10 @@ class TitleBar @JvmOverloads constructor(
      * so it remains usable even at high transparency.
      */
     private fun showTransparencyPopup() {
+        // Capture first, same shadowing pitfall as the collapse icon:
+        // inside SeekBar.apply, unqualified windowId resolves to
+        // View.getWindowId(), not this class's Int property.
+        val id = windowId
         transparencyPopup?.dismiss()
         val textView = TextView(context).apply {
             text = "透明度 $transparency%"
@@ -231,7 +235,7 @@ class TitleBar @JvmOverloads constructor(
                     if (!fromUser) return
                     transparency = progress
                     textView.text = "透明度 $progress%"
-                    host.onTransparency(windowId, progress)
+                    host.onTransparency(id, progress)
                 }
                 override fun onStartTrackingTouch(seekBar: android.widget.SeekBar) = Unit
                 override fun onStopTrackingTouch(seekBar: android.widget.SeekBar) = Unit
