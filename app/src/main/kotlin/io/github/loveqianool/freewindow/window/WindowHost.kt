@@ -7,7 +7,7 @@ interface WindowHost {
     /** User tapped inside the window content. */
     fun onTap(id: Int)
 
-    /** Collapse (▲ in the hamburger menu): shrink the window to its icon. */
+    /** Collapse button (▲ on the title bar): shrink the window to its icon. */
     fun onCollapse(id: Int)
 
     /** Fit (▭ in the hamburger menu): resize the window to the app's aspect ratio. */
@@ -27,6 +27,11 @@ interface WindowHost {
 
     /** Mute (🔊/🔇 in the hamburger menu): toggle per-window audio mute. */
     fun onToggleMute(id: Int)
+
+    /** Transparency slider (in the hamburger menu): whole-window
+     * opacity, including the title bar, 0 = opaque, 100 = most
+     * transparent. Applied live while dragging. */
+    fun onTransparency(id: Int, percent: Int)
 
     /** Close button (✕). */
     fun onClose(id: Int)

@@ -12,8 +12,8 @@ import kotlin.math.hypot
 
 /**
  * Title bar for a free window: drag to move, plus a hamburger menu
- * (fit / crop / mute), collapse / park / maximize / close buttons.
- * 38dp tall, semi-transparent black.
+ * (fit / crop / mute / transparency), collapse / park / maximize /
+ * close buttons. 38dp tall, semi-transparent black.
  */
 class TitleBar @JvmOverloads constructor(
     context: Context,
@@ -51,6 +51,9 @@ class TitleBar @JvmOverloads constructor(
     private var muted = false
     private var cropped = false
     private var cropMode = false
+    /** Whole-window transparency percent, 0 = opaque; the slider's value. */
+    private var transparency = 0
+    private var transparencyPopup: android.widget.PopupWindow? = null
 
     private var lastRawX = 0f
     private var lastRawY = 0f
@@ -190,15 +193,87 @@ class TitleBar @JvmOverloads constructor(
             },
         )
         menu.add(0, MENU_MUTE, 2, if (muted) "取消静音" else "静音")
+        menu.add(0, MENU_TRANSPARENCY, 3, "透明度…")
         popup.setOnMenuItemClickListener { item ->
             when (item.itemId) {
                 MENU_FIT -> host.onFitAspect(windowId)
                 MENU_CROP -> host.onCrop(windowId)
                 MENU_MUTE -> host.onToggleMute(windowId)
+                MENU_TRANSPARENCY -> showTransparencyPopup()
             }
             true
         }
         popup.show()
+    }
+
+    /**
+     * Transparency slider, as a PopupWindow anchored to the menu
+     * button (the same anchor mechanism PopupMenu uses, so it works
+     * with the SystemUI application context). Dragging applies live
+     * to the whole window, title bar included, through
+     * [WindowHost.onTransparency]; the popup itself stays opaque,
+     * so it remains usable even at high transparency.
+     */
+    private fun showTransparencyPopup() {
+        transparencyPopup?.dismiss()
+        val textView = TextView(context).apply {
+            text = "透明度 $transparency%"
+            textSize = 16f
+            setTextColor(Color.WHITE)
+        }
+        val seekBar = android.widget.SeekBar(context).apply {
+            max = 100
+            progress = transparency
+            setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(
+                    seekBar: android.widget.SeekBar, progress: Int, fromUser: Boolean,
+                ) {
+                    if (!fromUser) return
+                    transparency = progress
+                    textView.text = "透明度 $progress%"
+                    host.onTransparency(windowId, progress)
+                }
+                override fun onStartTrackingTouch(seekBar: android.widget.SeekBar) = Unit
+                override fun onStopTrackingTouch(seekBar: android.widget.SeekBar) = Unit
+            })
+        }
+        val doneBtn = TextView(context).apply {
+            text = "完成"
+            textSize = 16f
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            setPadding(0, dp(8), 0, 0)
+            setOnClickListener { transparencyPopup?.dismiss() }
+        }
+        val layout = LinearLayout(context).apply {
+            orientation = VERTICAL
+            setBackgroundColor(0xDD000000.toInt())
+            setPadding(dp(16), dp(16), dp(16), dp(16))
+            addView(textView)
+            addView(seekBar, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+            addView(doneBtn)
+        }
+        val popup = android.widget.PopupWindow(
+            layout,
+            dp(280),
+            LayoutParams.WRAP_CONTENT,
+            true,
+        ).apply {
+            isOutsideTouchable = true
+            // A background drawable is required for outside-touch
+            // dismissal; the layout itself carries the dark background.
+            setBackgroundDrawable(android.graphics.drawable.ColorDrawable(Color.TRANSPARENT))
+        }
+        transparencyPopup = popup
+        popup.showAsDropDown(menuBtn)
+    }
+
+    override fun onDetachedFromWindow() {
+        // The popup is anchored to this bar; leaving it up after the
+        // window closes would strand an orphan control panel.
+        transparencyPopup?.dismiss()
+        transparencyPopup = null
+        super.onDetachedFromWindow()
     }
 
     private fun dp(value: Int): Int =
@@ -226,5 +301,6 @@ class TitleBar @JvmOverloads constructor(
         private const val MENU_FIT = 2
         private const val MENU_CROP = 3
         private const val MENU_MUTE = 4
+        private const val MENU_TRANSPARENCY = 5
     }
 }

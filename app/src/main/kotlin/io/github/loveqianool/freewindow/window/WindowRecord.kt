@@ -23,5 +23,7 @@ data class WindowRecord(
     val isMuted: Boolean,
     /** Collapsed to a draggable icon; the VD keeps its old size (see collapseWindow). */
     val isCollapsed: Boolean = false,
+    /** Window transparency percent, 0 = opaque, 100 = most transparent. */
+    val transparency: Int = 0,
     val originalTaskId: Int = -1,
 )

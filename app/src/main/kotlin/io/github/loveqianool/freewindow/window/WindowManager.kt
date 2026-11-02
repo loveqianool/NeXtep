@@ -405,6 +405,26 @@ object WindowManager : WindowHost {
     }
 
     /**
+     * Whole-window transparency, title bar included, via
+     * LayoutParams.alpha (the params object is reused by applyRect /
+     * bringToFront, so it survives move, resize, maximize and
+     * re-add; only creation makes a fresh params, at the default
+     * 0% transparency). The alpha floor keeps the window faintly
+     * visible at 100%: a truly invisible window would have no
+     * title bar left to tap to turn it back, and visible windows
+     * have no Recents card to come back from.
+     */
+    override fun onTransparency(id: Int, percent: Int) {
+        val rec = windows[id] ?: return
+        val clamped = percent.coerceIn(0, 100)
+        val params = rec.view.layoutParams as? AndroidWindowManager.LayoutParams ?: return
+        params.alpha = maxOf(0.05f, (100 - clamped) / 100f)
+        wm?.updateViewLayout(rec.view, params)
+        windows[id] = rec.copy(transparency = clamped)
+        Log.i(TAG, "transparency id=$id percent=$clamped alpha=${params.alpha}")
+    }
+
+    /**
      * "Go to this window", the unified Recents-card-tap semantics:
      * a parked window is shown, and a maximized one is additionally restored
      * to its windowed size (a bare unpark on a maximized window is a no-op
